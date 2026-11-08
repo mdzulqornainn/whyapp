@@ -111,7 +111,15 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 .signal-title span { white-space: nowrap; color: #fff; }
 .signal-scroll { overflow-x: auto; padding-top: 10px; }
-.signal-labels { display: flex; min-width: max-content; }
+.signal-track { width: max-content; min-width: 520px; }
+.signal-frame-headings { display: flex; min-width: max-content; margin-left: 30px; }
+.signal-frame-heading {
+  flex: 0 0 auto;
+  color: #f2c8f5;
+  font-size: .65rem;
+  text-align: center;
+}
+.signal-labels { display: flex; min-width: max-content; margin-left: 30px; }
 .signal-label {
   flex: 0 0 auto;
   color: #f2c8f5;
