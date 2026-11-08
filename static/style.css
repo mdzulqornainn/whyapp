@@ -93,6 +93,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .bubble { display: inline-block; padding: 9px 14px; border-radius: 16px; background: white; text-align: left; overflow-wrap: anywhere; }
 .outgoing .bubble { color: white; background: var(--primary); }
 .signal-card {
+  width: fit-content;
+  max-width: 100%;
   margin-top: 8px;
   padding: 12px;
   overflow: hidden;
@@ -111,7 +113,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 .signal-title span { white-space: nowrap; color: #fff; }
 .signal-scroll { overflow-x: auto; padding-top: 10px; }
-.signal-track { width: max-content; min-width: 520px; }
+.signal-track { width: max-content; }
 .signal-frame-headings { display: flex; min-width: max-content; margin-left: 30px; }
 .signal-frame-heading {
   flex: 0 0 auto;
@@ -130,7 +132,6 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .signal-image {
   display: block;
   width: max-content;
-  min-width: 520px;
   height: 120px;
   margin-top: 4px;
 }

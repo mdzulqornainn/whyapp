@@ -366,7 +366,9 @@ async def join_room(socket_id: str, data: dict | None = None) -> None:
             history = await cursor.fetchall()
 
     for message in history:
-        if message["cipher"].startswith("dm1:"):
+        if message["cipher"].startswith(("dm2:", "dm3:")):
+            message["encoded"] = message.pop("cipher")
+        elif message["cipher"].startswith("dm1:"):
             message["encoded"] = message.pop("cipher")[4:]
         elif (
             len(message["cipher"]) % 16 == 6
@@ -448,6 +450,10 @@ async def save_chat(socket_id: str, data: dict | None = None) -> None:
     user_data = await get_user_data(socket_id)
     room_id = user_data.get("room_id")
     encoded = data.get("encoded")
+    frame_version = encoded[:4] if isinstance(encoded, str) and encoded.startswith(("dm2:", "dm3:")) else ""
+    is_per_byte_frame = bool(frame_version)
+    if is_per_byte_frame:
+        encoded = encoded[4:]
     if isinstance(encoded, str) and encoded.startswith("dm1:"):
         encoded = encoded[4:]
     if (
@@ -457,7 +463,7 @@ async def save_chat(socket_id: str, data: dict | None = None) -> None:
         or not re.fullmatch(r"(?:01|10)+", encoded)
     ):
         return
-    # Validasi frame START + DATA byte UTF-8 + even parity + END.
+    # Frame per-byte berisi START + DATA + PARITY + END.
     levels = encoded
     previous = "0"
     frame = []
@@ -465,20 +471,40 @@ async def save_chat(socket_id: str, data: dict | None = None) -> None:
         frame.append("1" if levels[index] == previous else "0")
         previous = levels[index + 1]
     bits = "".join(frame)
-    data_bits = bits[1:-2]
-    if (
-        not data_bits
-        or len(data_bits) % 8
-        or bits[0] == data_bits[0]
-        or bits[-1] == data_bits[-1]
-        or (data_bits.count("1") + int(bits[-2])) % 2
-    ):
-        return
+    if is_per_byte_frame:
+        if not bits or len(bits) % 11:
+            return
+        for index in range(0, len(bits), 11):
+            byte_frame = bits[index:index + 11]
+            data_bits = byte_frame[1:9]
+            start_is_invalid = (
+                byte_frame[0] != "1"
+                if frame_version == "dm3:"
+                else byte_frame[0] == data_bits[0]
+            )
+            if (
+                start_is_invalid
+                or byte_frame[-1] == data_bits[-1]
+                or (data_bits.count("1") + int(byte_frame[-2])) % 2
+            ):
+                return
+        stored_value = f"{frame_version}{encoded}"
+    else:
+        data_bits = bits[1:-2]
+        if (
+            not data_bits
+            or len(data_bits) % 8
+            or bits[0] == data_bits[0]
+            or bits[-1] == data_bits[-1]
+            or (data_bits.count("1") + int(bits[-2])) % 2
+        ):
+            return
+        stored_value = encoded
     async with web_app["db_pool"].acquire() as connection:
         async with connection.cursor() as cursor:
             await cursor.execute(
                 "INSERT INTO chat (room_id, user_id, pesan) VALUES (%s, %s, %s)",
-                (room_id, user_data["user_id"], encoded),
+                (room_id, user_data["user_id"], stored_value),
             )
 
 

@@ -84,28 +84,28 @@ function bytesToHex(bytes) {
 
 function createSignalFrame(bytes) {
   const dataBits = bytesToBinary(bytes);
-  const numberOfOnes = [...dataBits].filter((bit) => bit === "1").length;
-  const parityBit = numberOfOnes % 2 === 0 ? "0" : "1";
-  const startBit = dataBits[0] === "1" ? "0" : "1";
-  const endBit = dataBits[dataBits.length - 1] === "1" ? "0" : "1";
-  const bits = `${startBit}${dataBits}${parityBit}${endBit}`;
+  const byteBits = dataBits.match(/.{8}/g) || [];
+  const frames = byteBits.map((byte) => {
+    const parityBit = [...byte].filter((bit) => bit === "1").length % 2 === 0 ? "0" : "1";
+    const startBit = "1";
+    const endBit = byte[7] === "1" ? "0" : "1";
+
+    return {
+      bits: `${startBit}${byte}${parityBit}${endBit}`,
+      labels: [
+        { name: "START", value: startBit, width: SIGNAL_BIT_WIDTH },
+        { name: "DATA", value: "8 bit", width: 8 * SIGNAL_BIT_WIDTH },
+        { name: "PARITY", value: parityBit, width: SIGNAL_BIT_WIDTH },
+        { name: "END", value: endBit, width: SIGNAL_BIT_WIDTH },
+      ],
+    };
+  });
+  const bits = frames.map((frame) => frame.bits).join("");
 
   return {
     bits,
-    labels: [
-      { name: "START", value: startBit, width: SIGNAL_BIT_WIDTH },
-      {
-        name: "DATA",
-        value: `${dataBits.length} bit`,
-        width: dataBits.length * SIGNAL_BIT_WIDTH,
-      },
-      { name: "PARITY", value: parityBit, width: SIGNAL_BIT_WIDTH },
-      { name: "END", value: endBit, width: SIGNAL_BIT_WIDTH },
-    ],
+    labels: frames.flatMap((frame) => frame.labels),
     dataBits,
-    parityBit,
-    startBit,
-    endBit,
   };
 }
 
@@ -119,11 +119,14 @@ function encodeStoredMessage(bytes) {
     level ^= 1;
     encoded += level;
   }
-  return encoded;
+  return `dm3:${encoded}`;
 }
 
 function decodeStoredMessage(encoded) {
-  const levels = encoded.startsWith("dm1:") ? encoded.slice(4) : encoded;
+  const fixedStartFrame = encoded.startsWith("dm3:");
+  const previousPerByteFrame = encoded.startsWith("dm2:");
+  const perByteFrame = fixedStartFrame || previousPerByteFrame;
+  const levels = encoded.startsWith("dm1:") || perByteFrame ? encoded.slice(4) : encoded;
   if (!/^(?:01|10)+$/.test(levels)) throw new Error("Encoding tidak valid.");
   let previous = 0;
   let bits = "";
@@ -131,10 +134,31 @@ function decodeStoredMessage(encoded) {
     bits += Number(levels[index]) === previous ? "1" : "0";
     previous = Number(levels[index + 1]);
   }
-  const dataBits = bits.slice(1, -2);
-  if (!dataBits.length || dataBits.length % 8 !== 0) throw new Error("Frame tidak valid.");
-  const bytes = Uint8Array.from(dataBits.match(/.{8}/g), (byte) => parseInt(byte, 2));
-  if (createSignalFrame(bytes).bits !== bits) throw new Error("Parity atau batas frame tidak valid.");
+  let bytes;
+  if (perByteFrame) {
+    if (!bits.length || bits.length % 11 !== 0) throw new Error("Frame tidak valid.");
+    bytes = Uint8Array.from(bits.match(/.{11}/g), (frame) => parseInt(frame.slice(1, 9), 2));
+    const validBits = fixedStartFrame
+      ? createSignalFrame(bytes).bits
+      : [...bytes].map((byte) => {
+        const data = byte.toString(2).padStart(8, "0");
+        const parity = [...data].filter((bit) => bit === "1").length % 2 === 0 ? "0" : "1";
+        const start = data[0] === "1" ? "0" : "1";
+        const end = data[7] === "1" ? "0" : "1";
+        return `${start}${data}${parity}${end}`;
+      }).join("");
+    if (validBits !== bits) {
+      throw new Error("Parity atau batas frame tidak valid.");
+    }
+  } else {
+    const dataBits = bits.slice(1, -2);
+    if (!dataBits.length || dataBits.length % 8 !== 0) throw new Error("Frame tidak valid.");
+    bytes = Uint8Array.from(dataBits.match(/.{8}/g), (byte) => parseInt(byte, 2));
+    const legacyBits = [...bytes].map((byte) => byte.toString(2).padStart(8, "0")).join("");
+    const numberOfOnes = [...legacyBits].filter((bit) => bit === "1").length;
+    const legacyFrame = `${legacyBits[0] === "1" ? "0" : "1"}${legacyBits}${numberOfOnes % 2 === 0 ? "0" : "1"}${legacyBits[legacyBits.length - 1] === "1" ? "0" : "1"}`;
+    if (legacyFrame !== bits) throw new Error("Parity atau batas frame tidak valid.");
+  }
   return bytes;
 }
 
@@ -143,7 +167,8 @@ function createSignalImage(frameBits) {
   const bitWidth = SIGNAL_BIT_WIDTH;
   const leftMargin = 30;
   const signalWidth = frameBits.length * bitWidth;
-  const imageWidth = Math.max(520, leftMargin + signalWidth);
+  const signalEnd = leftMargin + signalWidth;
+  const imageWidth = signalEnd + 1;
   const high = 43;
   const low = 93;
   let level = 0;
@@ -186,6 +211,7 @@ function createSignalImage(frameBits) {
       <line x1="${leftMargin}" y1="${high}" x2="${imageWidth}" y2="${high}" class="guide"/>
       <line x1="${leftMargin}" y1="${low}" x2="${imageWidth}" y2="${low}" class="guide"/>
       ${bitLabels}
+      <line x1="${signalEnd}" y1="27" x2="${signalEnd}" y2="104" class="grid"/>
       <path d="${path}" class="signal" fill="none"/>
     </svg>`;
 
@@ -424,7 +450,7 @@ function startWebRTC(roomId) {
                    alt="Gambar sinyal Differential Manchester">
             </div>
             <div class="signal-help">
-              Start/end = kebalikan bit pertama/terakhir · Parity genap
+              Setiap byte: START 1 + 8 bit DATA + PARITY genap + END
             </div>
           </div>
           <details>

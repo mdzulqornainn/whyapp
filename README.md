@@ -4,18 +4,18 @@ Contoh aplikasi chat sederhana dengan autentikasi pengguna. Pesan dikirim
 langsung antar-browser memakai WebRTC DataChannel. Python menangani halaman,
 autentikasi, penyimpanan riwayat ciphertext, dan proses awal koneksi WebRTC.
 
-Setiap pesan memiliki visualisasi sinyal Differential Manchester dengan frame:
+Setiap byte memiliki frame Differential Manchester tersendiri:
 
 ```text
-START | DATA ASCII | PARITY | END
+START | DATA 8 bit | PARITY | END
 ```
 
-Parity menggunakan **even parity**. Nilai START adalah kebalikan bit pertama
-data, sedangkan nilai END adalah kebalikan bit terakhir data. Contoh: bit `1`
-menghasilkan event `0`, dan bit `0` menghasilkan event `1`. Visualisasi memakai
-byte UTF-8 pesan asli, bukan hasil XOR. Jadi pesan `1` memakai HEX `31`,
-DATA `00110001`, dan FRAME `10011000110`. Ciphertext XOR tetap dipakai untuk
-pengiriman melalui DataChannel.
+Parity menggunakan **even parity**. Nilai START selalu `1`, sedangkan END
+adalah kebalikan bit terakhir byte. Satu byte menghasilkan 11 bit frame,
+sedangkan tiga byte menghasilkan 33 bit. Contohnya, pesan `1` memakai HEX
+`31`, DATA `00110001`, dan FRAME `10011000110`. Visualisasi memakai byte UTF-8
+pesan asli, bukan hasil XOR. Ciphertext XOR tetap dipakai untuk pengiriman
+melalui DataChannel.
 
 ## 1. Instalasi
 
