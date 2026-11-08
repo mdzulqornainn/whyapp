@@ -1,7 +1,8 @@
 # Chat P2P Python untuk Pemula
 
-Contoh aplikasi chat sederhana. Pesan dikirim langsung antar-browser memakai
-WebRTC DataChannel. Python hanya membantu proses awal koneksi.
+Contoh aplikasi chat sederhana dengan autentikasi pengguna. Pesan dikirim
+langsung antar-browser memakai WebRTC DataChannel. Python menangani halaman,
+autentikasi, penyimpanan riwayat ciphertext, dan proses awal koneksi WebRTC.
 
 Setiap pesan memiliki visualisasi sinyal Differential Manchester dengan frame:
 
@@ -33,7 +34,39 @@ Windows:
 python -m pip install -r requirements.txt
 ```
 
-## 2. Menjalankan
+## 2. Database Laragon
+
+Pastikan MySQL Laragon aktif, lalu jalankan [database.sql](database.sql)
+melalui HeidiSQL atau phpMyAdmin. Script tersebut membuat database `whyapp`,
+tabel pengguna, room, chat, serta dua akun dummy.
+
+Konfigurasi default:
+
+```text
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=
+MYSQL_DATABASE=whyapp
+```
+
+Jika password MySQL Laragon tidak kosong, isi `MYSQL_PASSWORD` sebelum
+menjalankan aplikasi.
+
+Windows PowerShell:
+
+```powershell
+$env:MYSQL_PASSWORD = "password-mysql-anda"
+```
+
+Data dummy:
+
+| Username | Password |
+|---|---|
+| `alice` | `password123` |
+| `bob` | `password123` |
+
+## 3. Menjalankan
 
 ```bash
 python app.py
@@ -41,21 +74,46 @@ python app.py
 
 Buka <http://localhost:3001> di browser.
 
-## 3. Mencoba chat
+## 4. Mencoba chat
 
-1. Masukkan nama.
-2. Klik **Buat Room ID**.
-3. Buka alamat yang sama di browser kedua atau mode incognito.
-4. Masukkan Room ID tadi.
-5. Tunggu status **DataChannel: open**.
-6. Kirim pesan.
+1. Buka <http://localhost:3001>.
+2. Daftar akun baru atau masuk menggunakan akun dummy.
+3. Klik **Buat Room ID**, lalu klik **Masuk ke room**.
+4. Buka alamat yang sama di browser kedua atau mode incognito.
+5. Masuk dengan akun kedua dan masukkan Room ID tadi.
+6. Tunggu status **DataChannel: open**.
+7. Kirim pesan.
 
-Gunakan dua browser berbeda karena nama disimpan di `localStorage` browser.
+Riwayat pesan disimpan sebagai ciphertext di tabel `chat` dan dimuat kembali
+saat pengguna masuk ke room. Isi pesan tetap dikirim melalui DataChannel P2P.
 
-## 4. Penjelasan folder
+## 5. Endpoint API
+
+| Method | Endpoint | Keterangan |
+|---|---|---|
+| `POST` | `/api/register` | Membuat akun baru |
+| `POST` | `/api/login` | Login dan membuat session cookie |
+| `POST` | `/api/logout` | Menghapus session |
+| `GET` | `/api/me` | Memeriksa session aktif |
+| `GET` | `/health` | Memeriksa status server |
+
+Endpoint login dan register harus dipanggil menggunakan `POST` dengan body JSON:
+
+```json
+{
+  "username": "alice",
+  "password": "password123"
+}
+```
+
+Membuka `/api/login` langsung di browser menggunakan `GET` akan menghasilkan
+`405 Method Not Allowed`; gunakan halaman login atau request `POST`.
+
+## 6. Penjelasan folder
 
 ```text
 app.py                 server Python dan signaling Socket.IO
+database.sql           schema MySQL dan data dummy
 requirements.txt       daftar library Python
 static/index.html      halaman HTML awal
 static/style.css       tampilan aplikasi

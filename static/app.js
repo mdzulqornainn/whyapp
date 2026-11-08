@@ -5,7 +5,7 @@ const roomPattern = /^[A-Z0-9-]{4,32}$/;
 const roomAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const SIGNAL_BIT_WIDTH = 34;
 
-let username = localStorage.getItem("username") || "";
+let username = "";
 let closeActiveRoom = null;
 
 function escapeHtml(text) {
@@ -176,31 +176,62 @@ function navigation(activePage) {
     </header>`;
 }
 
-function showEntryPage() {
+async function api(path, options = {}) {
+  const requestOptions = { credentials: "include", ...options };
+  const headers = { ...requestOptions.headers };
+  if (requestOptions.body) headers["Content-Type"] = "application/json";
+
+  const response = await fetch(path, {
+    ...requestOptions,
+    headers,
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || "Permintaan gagal.");
+  return data;
+}
+
+function showEntryPage(mode = "login", message = "") {
+  const isLogin = mode === "login";
   app.innerHTML = `
     <main class="center">
       <section class="card small-card">
         <div class="logo">P2P</div>
-        <h1>Peer-to-Peer Chat</h1>
+        <h1>${isLogin ? "Masuk" : "Daftar"} ke P2P Chat</h1>
         <p class="muted">Pesan dikirim langsung antar-browser melalui WebRTC.</p>
-        <form id="username-form" class="form">
+        <form id="auth-form" class="form">
           <label>
             Username
-            <input id="username-input" maxlength="24" autofocus placeholder="Contoh: Adinda">
+            <input id="username-input" maxlength="100" required autofocus>
           </label>
-          <button type="submit">Lanjut</button>
+          <label>
+            Password
+            <input id="password-input" type="password" minlength="8" maxlength="72" required>
+          </label>
+          <div id="auth-error" class="error">${escapeHtml(message)}</div>
+          <button type="submit">${isLogin ? "Masuk" : "Daftar"}</button>
         </form>
+        <p class="muted">${isLogin ? "Belum punya akun?" : "Sudah punya akun?"}
+          <a href="#/${isLogin ? "register" : "login"}">${isLogin ? "Daftar" : "Masuk"}</a>
+        </p>
       </section>
     </main>`;
 
-  document.querySelector("#username-form").addEventListener("submit", (event) => {
+  document.querySelector("#auth-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const input = document.querySelector("#username-input");
-    username = input.value.trim();
-
-    if (!username) return;
-    localStorage.setItem("username", username);
-    location.hash = "#/home";
+    const error = document.querySelector("#auth-error");
+    try {
+      const data = await api(`/api/${isLogin ? "login" : "register"}`, {
+        method: "POST",
+        body: JSON.stringify({
+          username: document.querySelector("#username-input").value.trim(),
+          password: document.querySelector("#password-input").value,
+        }),
+      });
+      username = data.username;
+      location.hash = "#/home";
+    } catch (requestError) {
+      error.textContent = requestError.message;
+    }
   });
 }
 
@@ -265,9 +296,10 @@ function showProfilePage() {
     </main>`;
 
   document.querySelector("#logout").addEventListener("click", () => {
-    localStorage.removeItem("username");
-    username = "";
-    location.hash = "";
+    api("/api/logout", { method: "POST" }).finally(() => {
+      username = "";
+      location.hash = "#/login";
+    });
   });
 }
 
@@ -463,13 +495,37 @@ function startWebRTC(roomId) {
 
   socket.on("connect_error", () => {
     statuses.signaling = "error";
-    document.querySelector("#room-error").textContent = "Gagal terhubung ke server.";
+    document.querySelector("#room-error").textContent = "Sesi login tidak valid atau server tidak tersedia.";
     updateStatus();
+  });
+
+  socket.on("room-joined", ({ history = [] }) => {
+    history.forEach((message) => {
+      try {
+        const bytes = base64ToBytes(message.cipher);
+        const dataBytes = decryptBytes(bytes, roomId);
+        showChatMessage(
+          decrypt(bytes, roomId),
+          dataBytes,
+          message.sender,
+          message.sender === username,
+          new Date(message.timestamp).getTime(),
+        );
+      } catch {
+        showSystemMessage("Sebagian riwayat pesan tidak dapat dibaca.");
+      }
+    });
   });
 
   socket.on("room-full", () => {
     statuses.peer = "room-full";
     document.querySelector("#room-error").textContent = "Room sudah penuh.";
+    updateStatus();
+  });
+
+  socket.on("join-error", ({ message }) => {
+    document.querySelector("#room-error").textContent = message || "Gagal masuk room.";
+    statuses.peer = "error";
     updateStatus();
   });
 
@@ -547,6 +603,7 @@ function startWebRTC(roomId) {
     };
 
     dataChannel.send(JSON.stringify(message));
+    socket.emit("save-chat", { cipher: message.cipher });
     showChatMessage(text, dataBytes, username, true, message.timestamp);
     input.value = "";
   });
@@ -563,7 +620,7 @@ function routePage() {
   closeActiveRoom = null;
 
   if (!username) {
-    showEntryPage();
+    showEntryPage(parts[0] === "register" ? "register" : "login");
     return;
   }
 
@@ -578,4 +635,13 @@ function routePage() {
 
 window.addEventListener("hashchange", routePage);
 window.addEventListener("pagehide", () => closeActiveRoom?.());
-routePage();
+
+api("/api/me")
+  .then((data) => {
+    username = data.authenticated ? data.username : "";
+    routePage();
+  })
+  .catch(() => {
+    username = "";
+    routePage();
+  });
