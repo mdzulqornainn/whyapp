@@ -5,7 +5,7 @@ const roomPattern = /^[A-Z0-9-]{4,32}$/;
 const roomAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const SIGNAL_BIT_WIDTH = 34;
 
-let username = "";
+let username = localStorage.getItem("username") || "";
 let closeActiveRoom = null;
 
 function escapeHtml(text) {
@@ -70,20 +70,14 @@ function base64ToBytes(value) {
   return Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
 }
 
-function bytesToBinary(bytes) {
-  return [...bytes]
-    .map((value) => value.toString(2).padStart(8, "0"))
-    .join("");
-}
-
 function bytesToHex(bytes) {
   return [...bytes]
     .map((value) => value.toString(16).padStart(2, "0").toUpperCase())
     .join(" ");
 }
 
-function createSignalFrame(bytes) {
-  const dataBits = bytesToBinary(bytes);
+function createSignalFrame(byte) {
+  const dataBits = byte.toString(2).padStart(8, "0");
   const numberOfOnes = [...dataBits].filter((bit) => bit === "1").length;
   const parityBit = numberOfOnes % 2 === 0 ? "0" : "1";
   const startBit = dataBits[0] === "1" ? "0" : "1";
@@ -96,7 +90,7 @@ function createSignalFrame(bytes) {
       { name: "START", value: startBit, width: SIGNAL_BIT_WIDTH },
       {
         name: "DATA",
-        value: `${dataBits.length} bit`,
+        value: dataBits,
         width: dataBits.length * SIGNAL_BIT_WIDTH,
       },
       { name: "PARITY", value: parityBit, width: SIGNAL_BIT_WIDTH },
@@ -106,36 +100,8 @@ function createSignalFrame(bytes) {
     parityBit,
     startBit,
     endBit,
+    byte,
   };
-}
-
-function encodeStoredMessage(bytes) {
-  const { bits } = createSignalFrame(bytes);
-  let level = 0;
-  let encoded = "";
-  for (const bit of bits) {
-    if (bit === "0") level ^= 1;
-    encoded += level;
-    level ^= 1;
-    encoded += level;
-  }
-  return encoded;
-}
-
-function decodeStoredMessage(encoded) {
-  const levels = encoded.startsWith("dm1:") ? encoded.slice(4) : encoded;
-  if (!/^(?:01|10)+$/.test(levels)) throw new Error("Encoding tidak valid.");
-  let previous = 0;
-  let bits = "";
-  for (let index = 0; index < levels.length; index += 2) {
-    bits += Number(levels[index]) === previous ? "1" : "0";
-    previous = Number(levels[index + 1]);
-  }
-  const dataBits = bits.slice(1, -2);
-  if (!dataBits.length || dataBits.length % 8 !== 0) throw new Error("Frame tidak valid.");
-  const bytes = Uint8Array.from(dataBits.match(/.{8}/g), (byte) => parseInt(byte, 2));
-  if (createSignalFrame(bytes).bits !== bits) throw new Error("Parity atau batas frame tidak valid.");
-  return bytes;
 }
 
 function createSignalImage(frameBits) {
@@ -143,7 +109,8 @@ function createSignalImage(frameBits) {
   const bitWidth = SIGNAL_BIT_WIDTH;
   const leftMargin = 30;
   const signalWidth = frameBits.length * bitWidth;
-  const imageWidth = Math.max(520, leftMargin + signalWidth);
+  const signalEnd = leftMargin + signalWidth;
+  const imageWidth = Math.max(520, signalEnd + leftMargin);
   const high = 43;
   const low = 93;
   let level = 0;
@@ -179,6 +146,7 @@ function createSignalImage(frameBits) {
         .grid { stroke: #d99ae155; stroke-dasharray: 3 3; }
         .guide { stroke: #d99ae133; stroke-dasharray: 2 4; }
         .signal { stroke: #f8d8fa; stroke-width: 3; stroke-linejoin: round; }
+        .end-marker { stroke: #ffd166; stroke-width: 2; stroke-dasharray: 5 4; }
       </style>
       <rect width="100%" height="100%" fill="#61006f"/>
       <text x="8" y="48" class="level">H</text>
@@ -187,6 +155,7 @@ function createSignalImage(frameBits) {
       <line x1="${leftMargin}" y1="${low}" x2="${imageWidth}" y2="${low}" class="guide"/>
       ${bitLabels}
       <path d="${path}" class="signal" fill="none"/>
+      <line x1="${signalEnd}" y1="27" x2="${signalEnd}" y2="104" class="end-marker"/>
     </svg>`;
 
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
@@ -205,62 +174,31 @@ function navigation(activePage) {
     </header>`;
 }
 
-async function api(path, options = {}) {
-  const requestOptions = { credentials: "include", ...options };
-  const headers = { ...requestOptions.headers };
-  if (requestOptions.body) headers["Content-Type"] = "application/json";
-
-  const response = await fetch(path, {
-    ...requestOptions,
-    headers,
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.message || "Permintaan gagal.");
-  return data;
-}
-
-function showEntryPage(mode = "login", message = "") {
-  const isLogin = mode === "login";
+function showEntryPage() {
   app.innerHTML = `
     <main class="center">
       <section class="card small-card">
         <div class="logo">P2P</div>
-        <h1>${isLogin ? "Masuk" : "Daftar"} ke P2P Chat</h1>
+        <h1>Peer-to-Peer Chat</h1>
         <p class="muted">Pesan dikirim langsung antar-browser melalui WebRTC.</p>
-        <form id="auth-form" class="form">
+        <form id="username-form" class="form">
           <label>
             Username
-            <input id="username-input" maxlength="100" required autofocus>
+            <input id="username-input" maxlength="24" autofocus placeholder="Contoh: Adinda">
           </label>
-          <label>
-            Password
-            <input id="password-input" type="password" minlength="8" maxlength="72" required>
-          </label>
-          <div id="auth-error" class="error">${escapeHtml(message)}</div>
-          <button type="submit">${isLogin ? "Masuk" : "Daftar"}</button>
+          <button type="submit">Lanjut</button>
         </form>
-        <p class="muted">${isLogin ? "Belum punya akun?" : "Sudah punya akun?"}
-          <a href="#/${isLogin ? "register" : "login"}">${isLogin ? "Daftar" : "Masuk"}</a>
-        </p>
       </section>
     </main>`;
 
-  document.querySelector("#auth-form").addEventListener("submit", async (event) => {
+  document.querySelector("#username-form").addEventListener("submit", (event) => {
     event.preventDefault();
-    const error = document.querySelector("#auth-error");
-    try {
-      const data = await api(`/api/${isLogin ? "login" : "register"}`, {
-        method: "POST",
-        body: JSON.stringify({
-          username: document.querySelector("#username-input").value.trim(),
-          password: document.querySelector("#password-input").value,
-        }),
-      });
-      username = data.username;
-      location.hash = "#/home";
-    } catch (requestError) {
-      error.textContent = requestError.message;
-    }
+    const input = document.querySelector("#username-input");
+    username = input.value.trim();
+
+    if (!username) return;
+    localStorage.setItem("username", username);
+    location.hash = "#/home";
   });
 }
 
@@ -325,10 +263,9 @@ function showProfilePage() {
     </main>`;
 
   document.querySelector("#logout").addEventListener("click", () => {
-    api("/api/logout", { method: "POST" }).finally(() => {
-      username = "";
-      location.hash = "#/login";
-    });
+    localStorage.removeItem("username");
+    username = "";
+    location.hash = "";
   });
 }
 
@@ -402,7 +339,9 @@ function startWebRTC(roomId) {
   }
 
   function showChatMessage(text, dataBytes, sender, outgoing, timestamp) {
-    const signal = createSignalFrame(dataBytes);
+    const frames = [...dataBytes].map(createSignalFrame);
+    const totalBits = frames.reduce((total, frame) => total + frame.bits.length, 0);
+    const signalBits = frames.map((frame) => frame.bits).join("");
     messages.insertAdjacentHTML("beforeend", `
       <article class="message ${outgoing ? "outgoing" : ""}">
         <div class="meta">${escapeHtml(sender)} · ${new Date(timestamp).toLocaleTimeString("id-ID")}</div>
@@ -410,29 +349,40 @@ function startWebRTC(roomId) {
           <div class="signal-card">
             <div class="signal-title">
               DIFFERENTIAL MANCHESTER · EVEN PARITY
-              <span>${signal.bits.length} BIT</span>
+              <span>${frames.length} FRAME · ${totalBits} BIT</span>
             </div>
             <div class="signal-scroll">
-              <div class="signal-labels">
-                ${signal.labels.map((label) => `
-                  <span class="signal-label ${label.name.toLowerCase()}" style="width:${label.width}px">
-                    ${label.name}<b>${label.value}</b>
-                  </span>`).join("")}
+              <div class="signal-track">
+                <div class="signal-frame-headings">
+                  ${frames.map((frame, index) => `
+                    <span class="signal-frame-heading" style="width:${frame.bits.length * SIGNAL_BIT_WIDTH}px">
+                      FRAME ${index + 1} · BYTE ${frame.byte.toString(16).padStart(2, "0").toUpperCase()}
+                    </span>`).join("")}
+                </div>
+                <div class="signal-labels">
+                  ${frames.map((frame) => frame.labels.map((label) => `
+                    <span class="signal-label ${label.name.toLowerCase()}" style="width:${label.width}px">
+                      ${label.name}<b>${label.value}</b>
+                    </span>`).join("")).join("")}
+                </div>
+                <img class="signal-image"
+                     src="${createSignalImage(signalBits)}"
+                     alt="Sinyal Differential Manchester ${frames.length} frame">
               </div>
-              <img class="signal-image"
-                   src="${createSignalImage(signal.bits)}"
-                   alt="Gambar sinyal Differential Manchester">
             </div>
             <div class="signal-help">
-              Start/end = kebalikan bit pertama/terakhir · Parity genap
+              Setiap byte UTF-8 = START + 8 bit DATA + PARITY genap + END.
+              START/END adalah kebalikan bit pertama/terakhir DATA.
+              Garis putus-putus menandai akhir sinyal.
             </div>
           </div>
           <details>
-            <summary class="muted">Lihat data ASCII</summary>
+            <summary class="muted">Lihat data UTF-8</summary>
             <small>
               HEX: ${bytesToHex(dataBytes)}<br>
-              DATA: ${signal.dataBits}<br>
-              FRAME: ${signal.bits}
+              DATA: ${frames.map((frame) => frame.dataBits).join(" ")}<br>
+              FRAME:<br>
+              ${frames.map((frame, index) => `${index + 1}: ${frame.bits}`).join("<br>")}
             </small>
           </details>
         </article>`);
@@ -524,38 +474,13 @@ function startWebRTC(roomId) {
 
   socket.on("connect_error", () => {
     statuses.signaling = "error";
-    document.querySelector("#room-error").textContent = "Sesi login tidak valid atau server tidak tersedia.";
+    document.querySelector("#room-error").textContent = "Gagal terhubung ke server.";
     updateStatus();
-  });
-
-  socket.on("room-joined", ({ history = [] }) => {
-    history.forEach((message) => {
-      try {
-        const dataBytes = message.encoded
-          ? decodeStoredMessage(message.encoded)
-          : decryptBytes(base64ToBytes(message.cipher), roomId);
-        showChatMessage(
-          new TextDecoder().decode(dataBytes),
-          dataBytes,
-          message.sender,
-          message.sender === username,
-          new Date(message.timestamp).getTime(),
-        );
-      } catch {
-        showSystemMessage("Sebagian riwayat pesan tidak dapat dibaca.");
-      }
-    });
   });
 
   socket.on("room-full", () => {
     statuses.peer = "room-full";
     document.querySelector("#room-error").textContent = "Room sudah penuh.";
-    updateStatus();
-  });
-
-  socket.on("join-error", ({ message }) => {
-    document.querySelector("#room-error").textContent = message || "Gagal masuk room.";
-    statuses.peer = "error";
     updateStatus();
   });
 
@@ -625,11 +550,6 @@ function startWebRTC(roomId) {
 
     const bytes = encrypt(text, roomId);
     const dataBytes = new TextEncoder().encode(text);
-    const encoded = encodeStoredMessage(dataBytes);
-    if (encoded.length > 65535) {
-      showSystemMessage("Pesan terlalu panjang untuk disimpan (maksimal 4095 byte UTF-8).");
-      return;
-    }
     const message = {
       type: "chat",
       sender: username,
@@ -638,7 +558,6 @@ function startWebRTC(roomId) {
     };
 
     dataChannel.send(JSON.stringify(message));
-    socket.emit("save-chat", { encoded });
     showChatMessage(text, dataBytes, username, true, message.timestamp);
     input.value = "";
   });
@@ -655,7 +574,7 @@ function routePage() {
   closeActiveRoom = null;
 
   if (!username) {
-    showEntryPage(parts[0] === "register" ? "register" : "login");
+    showEntryPage();
     return;
   }
 
@@ -670,13 +589,4 @@ function routePage() {
 
 window.addEventListener("hashchange", routePage);
 window.addEventListener("pagehide", () => closeActiveRoom?.());
-
-api("/api/me")
-  .then((data) => {
-    username = data.authenticated ? data.username : "";
-    routePage();
-  })
-  .catch(() => {
-    username = "";
-    routePage();
-  });
+routePage();
