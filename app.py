@@ -1,8 +1,8 @@
 ﻿"""Server sederhana untuk aplikasi chat P2P.
 
 Server ini membantu dua browser bertukar informasi WebRTC dan menyimpan
-ciphertext chat untuk riwayat room.
-Isi pesan tidak disimpan atau diteruskan oleh server.
+pesan berformat Differential Manchester untuk riwayat room.
+Pesan langsung antar-browser tetap menggunakan ciphertext XOR.
 """
 
 from pathlib import Path
@@ -365,6 +365,16 @@ async def join_room(socket_id: str, data: dict | None = None) -> None:
             )
             history = await cursor.fetchall()
 
+    for message in history:
+        if message["cipher"].startswith("dm1:"):
+            message["encoded"] = message.pop("cipher")[4:]
+        elif (
+            len(message["cipher"]) % 16 == 6
+            and re.fullmatch(r"(?:01|10)+", message["cipher"])
+        ):
+            # Frame 8n+3 bit menjadi 16n+6 level; Base64 panjangnya kelipatan 4.
+            message["encoded"] = message.pop("cipher")
+
     await socket_server.emit(
         "room-joined",
         {"roomId": room_id, "peers": peers, "history": history},
@@ -437,14 +447,38 @@ async def save_chat(socket_id: str, data: dict | None = None) -> None:
     data = data or {}
     user_data = await get_user_data(socket_id)
     room_id = user_data.get("room_id")
-    cipher = data.get("cipher")
-    if not room_id or not isinstance(cipher, str) or not cipher or len(cipher) > 100000:
+    encoded = data.get("encoded")
+    if isinstance(encoded, str) and encoded.startswith("dm1:"):
+        encoded = encoded[4:]
+    if (
+        not room_id
+        or not isinstance(encoded, str)
+        or len(encoded) > 65535
+        or not re.fullmatch(r"(?:01|10)+", encoded)
+    ):
+        return
+    # Validasi frame START + DATA byte UTF-8 + even parity + END.
+    levels = encoded
+    previous = "0"
+    frame = []
+    for index in range(0, len(levels), 2):
+        frame.append("1" if levels[index] == previous else "0")
+        previous = levels[index + 1]
+    bits = "".join(frame)
+    data_bits = bits[1:-2]
+    if (
+        not data_bits
+        or len(data_bits) % 8
+        or bits[0] == data_bits[0]
+        or bits[-1] == data_bits[-1]
+        or (data_bits.count("1") + int(bits[-2])) % 2
+    ):
         return
     async with web_app["db_pool"].acquire() as connection:
         async with connection.cursor() as cursor:
             await cursor.execute(
                 "INSERT INTO chat (room_id, user_id, pesan) VALUES (%s, %s, %s)",
-                (room_id, user_data["user_id"], cipher),
+                (room_id, user_data["user_id"], encoded),
             )
 
 

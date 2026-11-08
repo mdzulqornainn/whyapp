@@ -109,6 +109,35 @@ function createSignalFrame(bytes) {
   };
 }
 
+function encodeStoredMessage(bytes) {
+  const { bits } = createSignalFrame(bytes);
+  let level = 0;
+  let encoded = "";
+  for (const bit of bits) {
+    if (bit === "0") level ^= 1;
+    encoded += level;
+    level ^= 1;
+    encoded += level;
+  }
+  return encoded;
+}
+
+function decodeStoredMessage(encoded) {
+  const levels = encoded.startsWith("dm1:") ? encoded.slice(4) : encoded;
+  if (!/^(?:01|10)+$/.test(levels)) throw new Error("Encoding tidak valid.");
+  let previous = 0;
+  let bits = "";
+  for (let index = 0; index < levels.length; index += 2) {
+    bits += Number(levels[index]) === previous ? "1" : "0";
+    previous = Number(levels[index + 1]);
+  }
+  const dataBits = bits.slice(1, -2);
+  if (!dataBits.length || dataBits.length % 8 !== 0) throw new Error("Frame tidak valid.");
+  const bytes = Uint8Array.from(dataBits.match(/.{8}/g), (byte) => parseInt(byte, 2));
+  if (createSignalFrame(bytes).bits !== bits) throw new Error("Parity atau batas frame tidak valid.");
+  return bytes;
+}
+
 function createSignalImage(frameBits) {
   // Satu bit memiliki dua bagian. Setiap bit selalu berganti level di tengah.
   const bitWidth = SIGNAL_BIT_WIDTH;
@@ -502,10 +531,11 @@ function startWebRTC(roomId) {
   socket.on("room-joined", ({ history = [] }) => {
     history.forEach((message) => {
       try {
-        const bytes = base64ToBytes(message.cipher);
-        const dataBytes = decryptBytes(bytes, roomId);
+        const dataBytes = message.encoded
+          ? decodeStoredMessage(message.encoded)
+          : decryptBytes(base64ToBytes(message.cipher), roomId);
         showChatMessage(
-          decrypt(bytes, roomId),
+          new TextDecoder().decode(dataBytes),
           dataBytes,
           message.sender,
           message.sender === username,
@@ -595,6 +625,11 @@ function startWebRTC(roomId) {
 
     const bytes = encrypt(text, roomId);
     const dataBytes = new TextEncoder().encode(text);
+    const encoded = encodeStoredMessage(dataBytes);
+    if (encoded.length > 65535) {
+      showSystemMessage("Pesan terlalu panjang untuk disimpan (maksimal 4095 byte UTF-8).");
+      return;
+    }
     const message = {
       type: "chat",
       sender: username,
@@ -603,7 +638,7 @@ function startWebRTC(roomId) {
     };
 
     dataChannel.send(JSON.stringify(message));
-    socket.emit("save-chat", { cipher: message.cipher });
+    socket.emit("save-chat", { encoded });
     showChatMessage(text, dataBytes, username, true, message.timestamp);
     input.value = "";
   });
