@@ -34,13 +34,19 @@ function createRoomId() {
   return result;
 }
 
-function createMessageId() {
-  return `${Date.now()}-${Math.random()}`;
+// Teks diubah menjadi bilangan ASCII (kode 0-127), satu karakter = satu byte.
+// Karakter di luar ASCII (misalnya emoji atau huruf beraksen) ditolak.
+function isAscii(text) {
+  return [...text].every((character) => character.charCodeAt(0) <= 127);
 }
 
-// XOR bekerja pada byte UTF-8 sehingga emoji juga dapat diproses.
+function asciiToBytes(text) {
+  return Uint8Array.from(text, (character) => character.charCodeAt(0));
+}
+
+// XOR bekerja pada kode ASCII setiap karakter dan kunci (Room ID).
 function xorBytes(bytes, key) {
-  const keyBytes = new TextEncoder().encode(key);
+  const keyBytes = asciiToBytes(key);
   const result = new Uint8Array(bytes.length);
 
   bytes.forEach((value, index) => {
@@ -51,15 +57,11 @@ function xorBytes(bytes, key) {
 }
 
 function encrypt(text, roomId) {
-  return xorBytes(new TextEncoder().encode(text), roomId);
+  return xorBytes(asciiToBytes(text), roomId);
 }
 
 function decryptBytes(bytes, roomId) {
   return xorBytes(bytes, roomId);
-}
-
-function decrypt(bytes, roomId) {
-  return new TextDecoder().decode(decryptBytes(bytes, roomId));
 }
 
 function bytesToBase64(bytes) {
@@ -109,6 +111,8 @@ function createSignalFrame(bytes) {
   };
 }
 
+// Mengubah frame bit menjadi level sinyal Differential Manchester
+// untuk disimpan di database (awalan "dm3:").
 function encodeStoredMessage(bytes) {
   const { bits } = createSignalFrame(bytes);
   let level = 0;
@@ -120,46 +124,6 @@ function encodeStoredMessage(bytes) {
     encoded += level;
   }
   return `dm3:${encoded}`;
-}
-
-function decodeStoredMessage(encoded) {
-  const fixedStartFrame = encoded.startsWith("dm3:");
-  const previousPerByteFrame = encoded.startsWith("dm2:");
-  const perByteFrame = fixedStartFrame || previousPerByteFrame;
-  const levels = encoded.startsWith("dm1:") || perByteFrame ? encoded.slice(4) : encoded;
-  if (!/^(?:01|10)+$/.test(levels)) throw new Error("Encoding tidak valid.");
-  let previous = 0;
-  let bits = "";
-  for (let index = 0; index < levels.length; index += 2) {
-    bits += Number(levels[index]) === previous ? "1" : "0";
-    previous = Number(levels[index + 1]);
-  }
-  let bytes;
-  if (perByteFrame) {
-    if (!bits.length || bits.length % 11 !== 0) throw new Error("Frame tidak valid.");
-    bytes = Uint8Array.from(bits.match(/.{11}/g), (frame) => parseInt(frame.slice(1, 9), 2));
-    const validBits = fixedStartFrame
-      ? createSignalFrame(bytes).bits
-      : [...bytes].map((byte) => {
-        const data = byte.toString(2).padStart(8, "0");
-        const parity = [...data].filter((bit) => bit === "1").length % 2 === 0 ? "0" : "1";
-        const start = data[0] === "1" ? "0" : "1";
-        const end = data[7] === "1" ? "0" : "1";
-        return `${start}${data}${parity}${end}`;
-      }).join("");
-    if (validBits !== bits) {
-      throw new Error("Parity atau batas frame tidak valid.");
-    }
-  } else {
-    const dataBits = bits.slice(1, -2);
-    if (!dataBits.length || dataBits.length % 8 !== 0) throw new Error("Frame tidak valid.");
-    bytes = Uint8Array.from(dataBits.match(/.{8}/g), (byte) => parseInt(byte, 2));
-    const legacyBits = [...bytes].map((byte) => byte.toString(2).padStart(8, "0")).join("");
-    const numberOfOnes = [...legacyBits].filter((bit) => bit === "1").length;
-    const legacyFrame = `${legacyBits[0] === "1" ? "0" : "1"}${legacyBits}${numberOfOnes % 2 === 0 ? "0" : "1"}${legacyBits[legacyBits.length - 1] === "1" ? "0" : "1"}`;
-    if (legacyFrame !== bits) throw new Error("Parity atau batas frame tidak valid.");
-  }
-  return bytes;
 }
 
 function createSignalImage(frameBits) {
@@ -347,13 +311,22 @@ function showProfilePage() {
         <p class="muted">USERNAME</p>
         <h1>${escapeHtml(username)}</h1>
         <button id="logout">Reset / Keluar</button>
+        <div id="logout-error" class="error"></div>
       </section>
     </main>`;
 
-  document.querySelector("#logout").addEventListener("click", () => {
-    localStorage.removeItem("username");
-    username = "";
-    location.hash = "";
+  document.querySelector("#logout").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const error = document.querySelector("#logout-error");
+    button.disabled = true;
+    try {
+      await api("/api/logout", { method: "POST" });
+      username = "";
+      location.hash = "#/login";
+    } catch (requestError) {
+      error.textContent = requestError.message;
+      button.disabled = false;
+    }
   });
 }
 
@@ -426,54 +399,40 @@ function startWebRTC(roomId) {
     messages.insertAdjacentHTML("beforeend", `<div class="system">${escapeHtml(text)}</div>`);
   }
 
-  function showChatMessage(text, dataBytes, sender, outgoing, timestamp) {
-    const frames = [...dataBytes].map(createSignalFrame);
-    const totalBits = frames.reduce((total, frame) => total + frame.bits.length, 0);
-    const signalBits = frames.map((frame) => frame.bits).join("");
+  // Room hanya menampilkan: gambar sinyal, HEX, DATA (bit), dan FRAME.
+  // Teks pesan asli tidak ditampilkan.
+  function showChatMessage(dataBytes, sender, outgoing, timestamp) {
+    const signal = createSignalFrame(dataBytes);
+    const frameCount = signal.bits.length / 11;
     messages.insertAdjacentHTML("beforeend", `
       <article class="message ${outgoing ? "outgoing" : ""}">
         <div class="meta">${escapeHtml(sender)} · ${new Date(timestamp).toLocaleTimeString("id-ID")}</div>
-        <div class="bubble">${escapeHtml(text)}</div>
-          <div class="signal-card">
-            <div class="signal-title">
-              DIFFERENTIAL MANCHESTER · EVEN PARITY
-              <span>${frames.length} FRAME · ${totalBits} BIT</span>
-            </div>
-            <div class="signal-scroll">
-              <div class="signal-track">
-                <div class="signal-frame-headings">
-                  ${frames.map((frame, index) => `
-                    <span class="signal-frame-heading" style="width:${frame.bits.length * SIGNAL_BIT_WIDTH}px">
-                      FRAME ${index + 1} · BYTE ${frame.byte.toString(16).padStart(2, "0").toUpperCase()}
-                    </span>`).join("")}
-                </div>
-                <div class="signal-labels">
-                  ${frames.map((frame) => frame.labels.map((label) => `
-                    <span class="signal-label ${label.name.toLowerCase()}" style="width:${label.width}px">
-                      ${label.name}<b>${label.value}</b>
-                    </span>`).join("")).join("")}
-                </div>
-                <img class="signal-image"
-                     src="${createSignalImage(signalBits)}"
-                     alt="Sinyal Differential Manchester ${frames.length} frame">
-              </div>
-            </div>
-            <div class="signal-help">
-              Setiap byte UTF-8 = START + 8 bit DATA + PARITY genap + END.
-              START/END adalah kebalikan bit pertama/terakhir DATA.
-              Garis putus-putus menandai akhir sinyal.
-            </div>
+        <div class="signal-card">
+          <div class="signal-title">
+            DIFFERENTIAL MANCHESTER · EVEN PARITY
+            <span>${frameCount} FRAME · ${signal.bits.length} BIT</span>
           </div>
-          <details>
-            <summary class="muted">Lihat data UTF-8</summary>
-            <small>
-              HEX: ${bytesToHex(dataBytes)}<br>
-              DATA: ${frames.map((frame) => frame.dataBits).join(" ")}<br>
-              FRAME:<br>
-              ${frames.map((frame, index) => `${index + 1}: ${frame.bits}`).join("<br>")}
-            </small>
-          </details>
-        </article>`);
+          <div class="signal-scroll">
+            <div class="signal-labels">
+              ${signal.labels.map((label) => `
+                <span class="signal-label ${label.name.toLowerCase()}" style="width:${label.width}px">
+                  ${label.name}<b>${label.value}</b>
+                </span>`).join("")}
+            </div>
+            <img class="signal-image"
+                 src="${createSignalImage(signal.bits)}"
+                 alt="Gambar sinyal Differential Manchester">
+          </div>
+          <div class="signal-help">
+            Setiap byte: START 1 + 8 bit DATA + PARITY genap + END
+          </div>
+          <div class="signal-data">
+            <div><b>HEX</b> ${bytesToHex(dataBytes)}</div>
+            <div><b>DATA</b> ${signal.dataBits}</div>
+            <div><b>FRAME</b> ${signal.bits}</div>
+          </div>
+        </div>
+      </article>`);
     messages.scrollTop = messages.scrollHeight;
   }
 
@@ -502,13 +461,7 @@ function startWebRTC(roomId) {
       if (message.type === "chat") {
         const bytes = base64ToBytes(message.cipher);
         const dataBytes = decryptBytes(bytes, roomId);
-        showChatMessage(
-          decrypt(bytes, roomId),
-          dataBytes,
-          message.sender,
-          false,
-          message.timestamp,
-        );
+        showChatMessage(dataBytes, message.sender, false, message.timestamp);
       }
     };
   }
@@ -564,6 +517,11 @@ function startWebRTC(roomId) {
     statuses.signaling = "error";
     document.querySelector("#room-error").textContent = "Gagal terhubung ke server.";
     updateStatus();
+  });
+
+  // Riwayat chat tidak ditampilkan di room; riwayat hanya ada di database.
+  socket.on("room-joined", () => {
+    showSystemMessage("Riwayat chat hanya tersimpan di database.");
   });
 
   socket.on("room-full", () => {
@@ -636,8 +594,18 @@ function startWebRTC(roomId) {
     const text = input.value.trim();
     if (!text || !dataChannel || dataChannel.readyState !== "open") return;
 
+    if (!isAscii(text)) {
+      showSystemMessage("Pesan hanya boleh berisi karakter ASCII (kode 0-127). Emoji dan huruf beraksen tidak didukung.");
+      return;
+    }
+
     const bytes = encrypt(text, roomId);
-    const dataBytes = new TextEncoder().encode(text);
+    const dataBytes = asciiToBytes(text);
+    const encoded = encodeStoredMessage(dataBytes);
+    if (encoded.length > 65535) {
+      showSystemMessage("Pesan terlalu panjang untuk disimpan (maksimal 2978 karakter ASCII).");
+      return;
+    }
     const message = {
       type: "chat",
       sender: username,
@@ -646,7 +614,8 @@ function startWebRTC(roomId) {
     };
 
     dataChannel.send(JSON.stringify(message));
-    showChatMessage(text, dataBytes, username, true, message.timestamp);
+    socket.emit("save-chat", { encoded });
+    showChatMessage(dataBytes, username, true, message.timestamp);
     input.value = "";
   });
 
@@ -662,7 +631,7 @@ function routePage() {
   closeActiveRoom = null;
 
   if (!username) {
-    showEntryPage();
+    showEntryPage(parts[0] === "register" ? "register" : "login");
     return;
   }
 
@@ -677,4 +646,13 @@ function routePage() {
 
 window.addEventListener("hashchange", routePage);
 window.addEventListener("pagehide", () => closeActiveRoom?.());
-routePage();
+
+api("/api/me")
+  .then((data) => {
+    username = data.authenticated ? data.username : "";
+    routePage();
+  })
+  .catch((requestError) => {
+    username = "";
+    showEntryPage("login", requestError.message);
+  });

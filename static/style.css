@@ -90,12 +90,11 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .message { max-width: 80%; margin: 14px 0; }
 .message.outgoing { margin-left: auto; text-align: right; }
 .meta { color: #24202699; font-size: .75rem; margin-bottom: 4px; }
-.bubble { display: inline-block; padding: 9px 14px; border-radius: 16px; background: white; text-align: left; overflow-wrap: anywhere; }
-.outgoing .bubble { color: white; background: var(--primary); }
+
 .signal-card {
   width: fit-content;
   max-width: 100%;
-  margin-top: 8px;
+  margin-top: 4px;
   padding: 12px;
   overflow: hidden;
   color: #fff;
@@ -103,6 +102,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   border-radius: 12px;
   text-align: left;
 }
+.message.outgoing .signal-card { margin-left: auto; }
 .signal-title {
   display: flex;
   justify-content: space-between;
@@ -113,7 +113,6 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 .signal-title span { white-space: nowrap; color: #fff; }
 .signal-scroll { overflow-x: auto; padding-top: 10px; }
-.signal-track { width: max-content; }
 .signal-frame-headings { display: flex; min-width: max-content; margin-left: 30px; }
 .signal-frame-heading {
   flex: 0 0 auto;
@@ -136,6 +135,17 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   margin-top: 4px;
 }
 .signal-help { margin-top: 9px; color: #e7b6eb; font-size: .7rem; }
+
+.signal-data {
+  margin-top: 10px;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: .72rem;
+  color: #f8d8fa;
+  overflow-wrap: anywhere;
+}
+.signal-data div { margin-top: 4px; }
+.signal-data b { color: #fff; margin-right: 6px; }
+
 .composer { border-top: 1px solid var(--border); border-bottom: 0; }
 .composer form { display: flex; gap: 8px; }
 .composer input { flex: 1; }

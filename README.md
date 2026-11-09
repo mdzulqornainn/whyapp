@@ -2,7 +2,10 @@
 
 Contoh aplikasi chat sederhana dengan autentikasi pengguna. Pesan dikirim
 langsung antar-browser memakai WebRTC DataChannel. Python menangani halaman,
-autentikasi, penyimpanan riwayat ciphertext, dan proses awal koneksi WebRTC.
+autentikasi, penyimpanan riwayat ke database, dan proses awal koneksi WebRTC.
+
+Pesan diubah menjadi bilangan ASCII (kode 0-127), satu karakter menjadi satu
+byte. Karakter di luar ASCII, seperti emoji dan huruf beraksen, tidak didukung.
 
 Setiap byte memiliki frame Differential Manchester tersendiri:
 
@@ -13,9 +16,12 @@ START | DATA 8 bit | PARITY | END
 Parity menggunakan **even parity**. Nilai START selalu `1`, sedangkan END
 adalah kebalikan bit terakhir byte. Satu byte menghasilkan 11 bit frame,
 sedangkan tiga byte menghasilkan 33 bit. Contohnya, pesan `1` memakai HEX
-`31`, DATA `00110001`, dan FRAME `10011000110`. Visualisasi memakai byte UTF-8
+`31`, DATA `00110001`, dan FRAME `10011000110`. Visualisasi memakai byte ASCII
 pesan asli, bukan hasil XOR. Ciphertext XOR tetap dipakai untuk pengiriman
 melalui DataChannel.
+
+Tampilan room hanya menampilkan gambar sinyal, HEX, DATA, dan FRAME. Teks
+pesan asli tidak ditampilkan.
 
 ## 1. Instalasi
 
@@ -82,10 +88,11 @@ Buka <http://localhost:3001> di browser.
 4. Buka alamat yang sama di browser kedua atau mode incognito.
 5. Masuk dengan akun kedua dan masukkan Room ID tadi.
 6. Tunggu status **DataChannel: open**.
-7. Kirim pesan.
+7. Kirim pesan (hanya karakter ASCII).
 
-Riwayat pesan disimpan sebagai ciphertext di tabel `chat` dan dimuat kembali
-saat pengguna masuk ke room. Isi pesan tetap dikirim melalui DataChannel P2P.
+Riwayat pesan disimpan di tabel `chat` dan hanya dapat dilihat melalui
+database (HeidiSQL atau phpMyAdmin). Riwayat tidak ditampilkan kembali di
+room saat pengguna masuk. Isi pesan tetap dikirim melalui DataChannel P2P.
 
 ## 5. Endpoint API
 
