@@ -174,9 +174,15 @@ function createSignalImage(frameBits) {
     level ^= 1;
     path += ` L ${middle} ${level ? high : low} L ${right} ${level ? high : low}`;
 
+   // REVISI: garis bantu di batas kiri bit pertama tidak digambar,
+    // supaya START 0 tampil sama dengan START 1 (tanpa garis paling awal).
+    const gridLine = index === 0
+      ? ""
+      : <line x1="${left}" y1="27" x2="${left}" y2="104" class="grid"/>;
+
     bitLabels += `
       <text x="${left + bitWidth / 2}" y="18" text-anchor="middle">${bit}</text>
-      <line x1="${left}" y1="27" x2="${left}" y2="104" class="grid"/>`;
+      ${gridLine}`;
   });
 
   const svg = `
