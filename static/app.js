@@ -351,10 +351,9 @@ function showProfilePage() {
     </main>`;
 
   document.querySelector("#logout").addEventListener("click", () => {
-    api("/api/logout", { method: "POST" }).finally(() => {
-      username = "";
-      location.hash = "#/login";
-    });
+    localStorage.removeItem("username");
+    username = "";
+    location.hash = "";
   });
 }
 
@@ -428,7 +427,9 @@ function startWebRTC(roomId) {
   }
 
   function showChatMessage(text, dataBytes, sender, outgoing, timestamp) {
-    const signal = createSignalFrame(dataBytes);
+    const frames = [...dataBytes].map(createSignalFrame);
+    const totalBits = frames.reduce((total, frame) => total + frame.bits.length, 0);
+    const signalBits = frames.map((frame) => frame.bits).join("");
     messages.insertAdjacentHTML("beforeend", `
       <article class="message ${outgoing ? "outgoing" : ""}">
         <div class="meta">${escapeHtml(sender)} · ${new Date(timestamp).toLocaleTimeString("id-ID")}</div>
@@ -436,29 +437,40 @@ function startWebRTC(roomId) {
           <div class="signal-card">
             <div class="signal-title">
               DIFFERENTIAL MANCHESTER · EVEN PARITY
-              <span>${signal.bits.length} BIT</span>
+              <span>${frames.length} FRAME · ${totalBits} BIT</span>
             </div>
             <div class="signal-scroll">
-              <div class="signal-labels">
-                ${signal.labels.map((label) => `
-                  <span class="signal-label ${label.name.toLowerCase()}" style="width:${label.width}px">
-                    ${label.name}<b>${label.value}</b>
-                  </span>`).join("")}
+              <div class="signal-track">
+                <div class="signal-frame-headings">
+                  ${frames.map((frame, index) => `
+                    <span class="signal-frame-heading" style="width:${frame.bits.length * SIGNAL_BIT_WIDTH}px">
+                      FRAME ${index + 1} · BYTE ${frame.byte.toString(16).padStart(2, "0").toUpperCase()}
+                    </span>`).join("")}
+                </div>
+                <div class="signal-labels">
+                  ${frames.map((frame) => frame.labels.map((label) => `
+                    <span class="signal-label ${label.name.toLowerCase()}" style="width:${label.width}px">
+                      ${label.name}<b>${label.value}</b>
+                    </span>`).join("")).join("")}
+                </div>
+                <img class="signal-image"
+                     src="${createSignalImage(signalBits)}"
+                     alt="Sinyal Differential Manchester ${frames.length} frame">
               </div>
-              <img class="signal-image"
-                   src="${createSignalImage(signal.bits)}"
-                   alt="Gambar sinyal Differential Manchester">
             </div>
             <div class="signal-help">
-              Setiap byte: START 1 + 8 bit DATA + PARITY genap + END
+              Setiap byte UTF-8 = START + 8 bit DATA + PARITY genap + END.
+              START/END adalah kebalikan bit pertama/terakhir DATA.
+              Garis putus-putus menandai akhir sinyal.
             </div>
           </div>
           <details>
-            <summary class="muted">Lihat data ASCII</summary>
+            <summary class="muted">Lihat data UTF-8</summary>
             <small>
               HEX: ${bytesToHex(dataBytes)}<br>
-              DATA: ${signal.dataBits}<br>
-              FRAME: ${signal.bits}
+              DATA: ${frames.map((frame) => frame.dataBits).join(" ")}<br>
+              FRAME:<br>
+              ${frames.map((frame, index) => `${index + 1}: ${frame.bits}`).join("<br>")}
             </small>
           </details>
         </article>`);
@@ -550,38 +562,13 @@ function startWebRTC(roomId) {
 
   socket.on("connect_error", () => {
     statuses.signaling = "error";
-    document.querySelector("#room-error").textContent = "Sesi login tidak valid atau server tidak tersedia.";
+    document.querySelector("#room-error").textContent = "Gagal terhubung ke server.";
     updateStatus();
-  });
-
-  socket.on("room-joined", ({ history = [] }) => {
-    history.forEach((message) => {
-      try {
-        const dataBytes = message.encoded
-          ? decodeStoredMessage(message.encoded)
-          : decryptBytes(base64ToBytes(message.cipher), roomId);
-        showChatMessage(
-          new TextDecoder().decode(dataBytes),
-          dataBytes,
-          message.sender,
-          message.sender === username,
-          new Date(message.timestamp).getTime(),
-        );
-      } catch {
-        showSystemMessage("Sebagian riwayat pesan tidak dapat dibaca.");
-      }
-    });
   });
 
   socket.on("room-full", () => {
     statuses.peer = "room-full";
     document.querySelector("#room-error").textContent = "Room sudah penuh.";
-    updateStatus();
-  });
-
-  socket.on("join-error", ({ message }) => {
-    document.querySelector("#room-error").textContent = message || "Gagal masuk room.";
-    statuses.peer = "error";
     updateStatus();
   });
 
@@ -651,11 +638,6 @@ function startWebRTC(roomId) {
 
     const bytes = encrypt(text, roomId);
     const dataBytes = new TextEncoder().encode(text);
-    const encoded = encodeStoredMessage(dataBytes);
-    if (encoded.length > 65535) {
-      showSystemMessage("Pesan terlalu panjang untuk disimpan (maksimal 4095 byte UTF-8).");
-      return;
-    }
     const message = {
       type: "chat",
       sender: username,
@@ -664,7 +646,6 @@ function startWebRTC(roomId) {
     };
 
     dataChannel.send(JSON.stringify(message));
-    socket.emit("save-chat", { encoded });
     showChatMessage(text, dataBytes, username, true, message.timestamp);
     input.value = "";
   });
@@ -681,7 +662,7 @@ function routePage() {
   closeActiveRoom = null;
 
   if (!username) {
-    showEntryPage(parts[0] === "register" ? "register" : "login");
+    showEntryPage();
     return;
   }
 
@@ -696,13 +677,4 @@ function routePage() {
 
 window.addEventListener("hashchange", routePage);
 window.addEventListener("pagehide", () => closeActiveRoom?.());
-
-api("/api/me")
-  .then((data) => {
-    username = data.authenticated ? data.username : "";
-    routePage();
-  })
-  .catch(() => {
-    username = "";
-    routePage();
-  });
+routePage();
