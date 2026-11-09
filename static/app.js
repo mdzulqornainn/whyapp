@@ -2,7 +2,6 @@
 
 const app = document.querySelector("#app");
 const roomPattern = /^[A-Z0-9-]{4,32}$/;
-const roomAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const SIGNAL_BIT_WIDTH = 34;
 
 let username = "";
@@ -20,18 +19,6 @@ function escapeHtml(text) {
 
 function normalizeRoomId(value) {
   return String(value || "").trim().toUpperCase().replace(/\s+/g, "");
-}
-
-function createRoomId() {
-  const randomBytes = crypto.getRandomValues(new Uint8Array(8));
-  let result = "";
-
-  randomBytes.forEach((value, index) => {
-    result += roomAlphabet[value % roomAlphabet.length];
-    if (index === 3) result += "-";
-  });
-
-  return result;
 }
 
 // Teks diubah menjadi bilangan Extended ASCII (kode 0-255, tabel Windows-1252
@@ -295,10 +282,22 @@ function showHomePage() {
       </div>
     </main>`;
 
-  document.querySelector("#generate-room").addEventListener("click", () => {
-    const newRoom = createRoomId();
-    document.querySelector("#new-room").innerHTML = `
-      <p><code>${newRoom}</code></p>
+  document.querySelector("#generate-room").addEventListener("click", async (event) => {
+    // Room ID dibuat di server agar dicek dulu ke database (tidak duplikat).
+    const button = event.currentTarget;
+    const output = document.querySelector("#new-room");
+    button.disabled = true;
+    let newRoom;
+    try {
+      ({ roomId: newRoom } = await api("/api/rooms", { method: "POST" }));
+    } catch (requestError) {
+      output.innerHTML = `<div class="error">${escapeHtml(requestError.message)}</div>`;
+      return;
+    } finally {
+      button.disabled = false;
+    }
+    output.innerHTML = `
+      <p><code>${escapeHtml(newRoom)}</code></p>
       <button id="open-room" class="secondary">Masuk ke room</button>`;
     document.querySelector("#open-room").addEventListener("click", () => {
       location.hash = `#/room/${newRoom}`;

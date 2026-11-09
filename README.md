@@ -183,9 +183,28 @@ misalnya:
 10011000110
 ```
 
-Saat pengguna masuk room, server mengirim 100 pesan terakhir room tersebut,
-lalu browser menampilkannya sebagai gambar sinyal. Riwayat juga dapat dilihat
-langsung melalui HeidiSQL atau phpMyAdmin.
+Kolom `penerima_id` mencatat lawan bicara yang ada di room saat pesan
+dikirim. Penerima ditentukan oleh server, bukan oleh browser.
+
+Saat pengguna masuk room, server mengirim maksimal 100 pesan terakhir yang
+**dikirim atau diterima oleh pengguna itu sendiri**, lalu browser
+menampilkannya sebagai gambar sinyal. Contohnya, jika Alice dan Bob
+mengobrol, lalu Bob keluar dan Nain masuk ke room yang sama, Nain tidak
+melihat percakapan Alice dan Bob. Alice tetap melihat riwayat percakapannya
+dengan Bob dan dengan Nain.
+
+Pada database lama, kolom `penerima_id` ditambahkan otomatis saat server
+dijalankan. Pesan lama belum memiliki penerima, sehingga hanya terlihat oleh
+pengirimnya.
+
+Riwayat juga dapat dilihat langsung melalui HeidiSQL atau phpMyAdmin.
+
+## Room ID
+
+Tombol **Buat Room ID** meminta Room ID ke server (`POST /api/rooms`). Server
+membuat ID acak berformat `XXXX-XXXX` dan langsung menyimpannya ke tabel
+`room`. Jika ID tersebut sudah ada di database, server membuat ID lain,
+sehingga Room ID baru tidak pernah duplikat.
 
 Panjang pesan maksimal 5957 karakter (11 bit per karakter, batas kolom `TEXT`
 65535 byte).
@@ -198,6 +217,7 @@ Panjang pesan maksimal 5957 karakter (11 bit per karakter, batas kolom `TEXT`
 | `POST` | `/api/login` | Login dan membuat session cookie |
 | `POST` | `/api/logout` | Menghapus session |
 | `GET` | `/api/me` | Memeriksa session aktif |
+| `POST` | `/api/rooms` | Membuat Room ID baru yang belum ada di database (perlu login) |
 | `GET` | `/health` | Memeriksa status server |
 
 Endpoint login dan register harus dipanggil menggunakan `POST` dengan body JSON:
@@ -244,5 +264,6 @@ Aplikasi ini untuk pembelajaran, bukan untuk produksi.
   Kuncinya adalah Room ID, yang juga terlihat di URL.
 - Kolom `pesan` berisi frame bit dari pesan asli. Teks pesan dapat dibaca
   kembali dengan mengambil 8 bit DATA dari setiap frame.
-- Siapa pun yang mengetahui Room ID dapat masuk dan melihat riwayat room.
+- Siapa pun yang mengetahui Room ID dapat masuk ke room, tetapi hanya melihat
+  riwayat pesan yang ia kirim atau terima sendiri.
 - Session login disimpan di memori server dan hilang saat server dimatikan.

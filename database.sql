@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS chat (
     id_chat BIGINT AUTO_INCREMENT PRIMARY KEY,
     room_id VARCHAR(32) NOT NULL,
     user_id CHAR(36) NOT NULL,
+    -- Lawan bicara yang ada di room saat pesan dikirim. Riwayat hanya
+    -- ditampilkan ke pengirim (user_id) dan penerima (penerima_id).
+    penerima_id CHAR(36) NULL,
     pesan TEXT NOT NULL,
     waktu_kirim TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_chat_room
@@ -29,6 +32,10 @@ CREATE TABLE IF NOT EXISTS chat (
     CONSTRAINT fk_chat_pengguna
         FOREIGN KEY (user_id) REFERENCES pengguna(user_id)
         ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    CONSTRAINT fk_chat_penerima
+        FOREIGN KEY (penerima_id) REFERENCES pengguna(user_id)
+        ON DELETE SET NULL
         ON UPDATE CASCADE,
     INDEX idx_chat_room_time (room_id, waktu_kirim)
 );

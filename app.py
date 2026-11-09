@@ -75,9 +75,31 @@ async def init_database(app: web.Application) -> None:
         minsize=1,
         maxsize=10,
     )
+    await ensure_chat_schema(app["db_pool"])
     yield
     app["db_pool"].close()
     await app["db_pool"].wait_closed()
+
+
+async def ensure_chat_schema(pool: aiomysql.Pool) -> None:
+    """Tambahkan kolom chat.penerima_id pada database lama jika belum ada."""
+    async with pool.acquire() as connection:
+        async with connection.cursor() as cursor:
+            await cursor.execute(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'chat' "
+                "AND COLUMN_NAME = 'penerima_id'"
+            )
+            (exists,) = await cursor.fetchone()
+            if exists:
+                return
+            await cursor.execute(
+                "ALTER TABLE chat "
+                "ADD COLUMN penerima_id CHAR(36) NULL AFTER user_id, "
+                "ADD CONSTRAINT fk_chat_penerima FOREIGN KEY (penerima_id) "
+                "REFERENCES pengguna(user_id) ON DELETE SET NULL ON UPDATE CASCADE"
+            )
+            print("Kolom chat.penerima_id ditambahkan.", flush=True)
 
 
 web_app.cleanup_ctx.append(init_database)
@@ -216,6 +238,44 @@ async def current_user(request: web.Request) -> web.Response:
     )
 
 
+ROOM_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+ROOM_ID_ATTEMPTS = 10
+
+
+def random_room_id() -> str:
+    """Buat Room ID acak berformat XXXX-XXXX."""
+    part = lambda: "".join(secrets.choice(ROOM_ALPHABET) for _ in range(4))
+    return f"{part()}-{part()}"
+
+
+async def create_room(request: web.Request) -> web.Response:
+    """Buat Room ID baru yang dijamin belum ada di tabel `room`.
+
+    ID langsung disimpan dengan INSERT. Jika ternyata sudah ada (duplicate
+    key), dibuat ID lain. Cara ini aman walaupun dua orang menekan tombol
+    bersamaan, karena pengecekan dan penyimpanan terjadi dalam satu query.
+    """
+    if not session_from_request(request):
+        return web.json_response({"message": "Silakan login terlebih dahulu."}, status=401)
+
+    async with web_app["db_pool"].acquire() as connection:
+        async with connection.cursor() as cursor:
+            for _ in range(ROOM_ID_ATTEMPTS):
+                room_id = random_room_id()
+                await cursor.execute(
+                    "INSERT IGNORE INTO room (room_id) VALUES (%s)",
+                    (room_id,),
+                )
+                if cursor.rowcount == 1:
+                    return web.json_response({"roomId": room_id}, status=201)
+
+    return web.json_response(
+        {"message": "Gagal membuat Room ID unik, coba lagi."},
+        status=503,
+    )
+
+
+web_app.router.add_post("/api/rooms", create_room)
 web_app.router.add_post("/api/register", register_user)
 web_app.router.add_post("/api/login", login_user)
 web_app.router.add_post("/api/logout", logout_user)
@@ -283,6 +343,12 @@ def decode_stored_message(value: str) -> list[int] | None:
     return [int(data_bits[i:i + 8], 2) for i in range(0, len(data_bits), 8)]
 
 async def load_room_history(room_id: str, user_id: str) -> list[dict]:
+    """Ambil riwayat room yang hanya melibatkan pengguna ini.
+
+    Pesan hanya dikembalikan jika pengguna adalah pengirim atau penerimanya,
+    sehingga orang yang baru masuk room tidak bisa membaca percakapan lama
+    milik pengguna lain.
+    """
     async with web_app["db_pool"].acquire() as connection:
         async with connection.cursor(aiomysql.DictCursor) as cursor:
             await cursor.execute(
@@ -290,8 +356,9 @@ async def load_room_history(room_id: str, user_id: str) -> list[dict]:
                 "UNIX_TIMESTAMP(c.waktu_kirim) * 1000 AS timestamp, "
                 "p.nama_pengguna AS sender "
                 "FROM chat c JOIN pengguna p ON p.user_id = c.user_id "
-                "WHERE c.room_id = %s ORDER BY c.id_chat DESC LIMIT 100",
-                (room_id,),
+                "WHERE c.room_id = %s AND (c.user_id = %s OR c.penerima_id = %s) "
+                "ORDER BY c.id_chat DESC LIMIT 100",
+                (room_id, user_id, user_id),
             )
             rows = await cursor.fetchall()
 
@@ -529,12 +596,24 @@ async def save_chat(socket_id: str, data: dict | None = None) -> None:
         or frame_bits_to_bytes(frame) is None
     ):
         return
-    stored_value = frame
+    # Penerima ditentukan server dari peer yang sedang ada di room yang sama,
+    # bukan dari data yang dikirim browser.
+    receiver_id = None
+    for peer_id in users_in_room(room_id) - {socket_id}:
+        try:
+            peer_data = await get_user_data(peer_id)
+        except KeyError:
+            continue
+        if peer_data.get("room_id") == room_id:
+            receiver_id = peer_data.get("user_id")
+            break
+
     async with web_app["db_pool"].acquire() as connection:
         async with connection.cursor() as cursor:
             await cursor.execute(
-                "INSERT INTO chat (room_id, user_id, pesan) VALUES (%s, %s, %s)",
-                (room_id, user_data["user_id"], stored_value),
+                "INSERT INTO chat (room_id, user_id, penerima_id, pesan) "
+                "VALUES (%s, %s, %s, %s)",
+                (room_id, user_data["user_id"], receiver_id, frame),
             )
 
 
