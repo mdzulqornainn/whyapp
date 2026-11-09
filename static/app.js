@@ -34,15 +34,22 @@ function createRoomId() {
   return result;
 }
 
-// Teks diubah menjadi bilangan ASCII (kode 0-127), satu karakter = satu byte.
-// Karakter di luar ASCII (misalnya emoji atau huruf beraksen) ditolak.
+// Teks diubah menjadi bilangan Extended ASCII (kode 0-255, tabel Windows-1252
+// seperti di ascii-code.com), satu karakter = satu byte (8 bit data).
+// Contoh: "€" = 128 (0x80), "é" = 233 (0xE9). Emoji tidak ada di tabel ini.
+const extendedAsciiDecoder = new TextDecoder("windows-1252");
+const characterToByte = new Map(
+  Array.from({ length: 256 }, (_, byte) => [
+    extendedAsciiDecoder.decode(Uint8Array.of(byte)),
+    byte,
+  ]),
+);
+
 function isAscii(text) {
-  return [...text].every((character) => character.charCodeAt(0) <= 127);
+  return [...text].every((character) => characterToByte.has(character));
 }
 
-function asciiToBytes(text) {
-  return Uint8Array.from(text, (character) => character.charCodeAt(0));
-}
+
 
 // XOR bekerja pada kode ASCII setiap karakter dan kunci (Room ID).
 function xorBytes(bytes, key) {
@@ -595,7 +602,7 @@ function startWebRTC(roomId) {
     if (!text || !dataChannel || dataChannel.readyState !== "open") return;
 
     if (!isAscii(text)) {
-      showSystemMessage("Pesan hanya boleh berisi karakter ASCII (kode 0-127). Emoji dan huruf beraksen tidak didukung.");
+      showSystemMessage("Pesan hanya boleh berisi karakter Extended ASCII (kode 0-255, mis. € é ©). Emoji tidak didukung.");
       return;
     }
 
