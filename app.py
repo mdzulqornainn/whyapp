@@ -220,6 +220,29 @@ web_app.router.add_post("/api/login", login_user)
 web_app.router.add_post("/api/logout", logout_user)
 web_app.router.add_get("/api/me", current_user)
 
+def decode_stored_message(value: str) -> list[int] | None:
+    frame_version = value[:4] if value.startswith(("dm2:", "dm3:")) else ""
+    levels = value[4:] if frame_version or value.startswith("dm1:") else value
+    if not levels or len(levels) % 2 or not re.fullmatch(r"(?:01|10)+", levels):
+        return None
+
+    previous = "0"
+    frame = []
+    for index in range(0, len(levels), 2):
+        frame.append("1" if levels[index] == previous else "0")
+        previous = levels[index + 1]
+    bits = "".join(frame)
+
+    if frame_version:
+        if len(bits) % 11:
+            return None
+        data_bits = "".join(bits[i + 1:i + 9] for i in range(0, len(bits), 11))
+    else:
+        data_bits = bits[1:-2]
+    if not data_bits or len(data_bits) % 8:
+        return None
+    return [int(data_bits[i:i + 8], 2) for i in range(0, len(data_bits), 8)]
+
 
 async def get_user_data(socket_id: str) -> dict:
     """Ambil username dan room milik sebuah koneksi."""
