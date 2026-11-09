@@ -365,8 +365,20 @@ async def join_room(socket_id: str, data: dict | None = None) -> None:
                 "WHERE c.room_id = %s ORDER BY c.waktu_kirim ASC LIMIT 100",
                 (room_id,),
             )
-            history = await cursor.fetchall()   
+            history = await cursor.fetchall() 
 
+    for message in history:
+            if message["cipher"].startswith(("dm2:", "dm3:")):
+                message["encoded"] = message.pop("cipher")
+            elif message["cipher"].startswith("dm1:"):
+                message["encoded"] = message.pop("cipher")[4:]
+            elif (
+                len(message["cipher"]) % 16 == 6
+                and re.fullmatch(r"(?:01|10)+", message["cipher"])
+            ):
+            # Frame 8n+3 bit menjadi 16n+6 level; Base64 panjangnya kelipatan 4.
+                message["encoded"] = message.pop("cipher") 
+    
     # Riwayat chat TIDAK dikirim ke browser. Riwayat hanya tersimpan di
     # tabel `chat` dan dapat dilihat melalui database.
     await socket_server.emit(
