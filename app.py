@@ -355,6 +355,18 @@ async def join_room(socket_id: str, data: dict | None = None) -> None:
         },
     )
 
+    async with web_app["db_pool"].acquire() as connection:
+        async with connection.cursor(aiomysql.DictCursor) as cursor:
+            await cursor.execute(
+                "SELECT c.pesan AS cipher, UNIX_TIMESTAMP(c.waktu_kirim) * 1000 "
+                "AS timestamp, "
+                "p.nama_pengguna AS sender FROM chat c "
+                "JOIN pengguna p ON p.user_id = c.user_id "
+                "WHERE c.room_id = %s ORDER BY c.waktu_kirim ASC LIMIT 100",
+                (room_id,),
+            )
+            history = await cursor.fetchall()   
+
     # Riwayat chat TIDAK dikirim ke browser. Riwayat hanya tersimpan di
     # tabel `chat` dan dapat dilihat melalui database.
     await socket_server.emit(

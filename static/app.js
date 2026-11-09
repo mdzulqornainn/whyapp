@@ -49,7 +49,13 @@ function isAscii(text) {
   return [...text].every((character) => characterToByte.has(character));
 }
 
+function asciiToBytes(text) {
+  return Uint8Array.from([...text], (character) => characterToByte.get(character));
+}
 
+function bytesToText(bytes) {
+  return extendedAsciiDecoder.decode(bytes);
+}
 
 // XOR bekerja pada kode ASCII setiap karakter dan kunci (Room ID).
 function xorBytes(bytes, key) {
