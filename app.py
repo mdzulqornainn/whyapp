@@ -1,7 +1,8 @@
 ﻿"""Server sederhana untuk aplikasi chat P2P.
 
 Server ini membantu dua browser bertukar informasi WebRTC dan menyimpan
-pesan berformat Differential Manchester untuk riwayat room di database.
+frame bit pesan (START + DATA + PARITY + END per byte) di kolom `pesan`
+tabel `chat` untuk riwayat room.
 Riwayat dibaca dari database dan dikirim ke browser saat pengguna masuk room.
 Pesan langsung antar-browser tetap menggunakan ciphertext XOR.
 """
@@ -220,7 +221,45 @@ web_app.router.add_post("/api/login", login_user)
 web_app.router.add_post("/api/logout", logout_user)
 web_app.router.add_get("/api/me", current_user)
 
+FRAME_SIZE = 11  # START + DATA 8 bit + PARITY + END
+
+
+def bytes_to_frame_bits(data_bytes: list[int]) -> str:
+    """Ubah byte menjadi frame bit, sama seperti createSignalFrame di app.js."""
+    frames = []
+    for value in data_bytes:
+        data_bits = f"{value:08b}"
+        parity = str(data_bits.count("1") % 2)
+        end = "0" if data_bits[-1] == "1" else "1"
+        frames.append(f"1{data_bits}{parity}{end}")
+    return "".join(frames)
+
+
+def frame_bits_to_bytes(bits: str) -> list[int] | None:
+    """Validasi frame bit lalu kembalikan byte DATA, atau None jika tidak valid."""
+    if not bits or len(bits) % FRAME_SIZE or not re.fullmatch(r"[01]+", bits):
+        return None
+    data_bytes = []
+    for index in range(0, len(bits), FRAME_SIZE):
+        byte_frame = bits[index:index + FRAME_SIZE]
+        data_bits = byte_frame[1:9]
+        if (
+            byte_frame[0] != "1"
+            or byte_frame[-1] == data_bits[-1]
+            or (data_bits.count("1") + int(byte_frame[-2])) % 2
+        ):
+            return None
+        data_bytes.append(int(data_bits, 2))
+    return data_bytes
+
+
 def decode_stored_message(value: str) -> list[int] | None:
+    # Format sekarang: kolom `pesan` berisi frame bit langsung.
+    data_bytes = frame_bits_to_bytes(value)
+    if data_bytes is not None:
+        return data_bytes
+
+    # Format lama: level Differential Manchester (awalan dm1:/dm2:/dm3:).
     frame_version = value[:4] if value.startswith(("dm2:", "dm3:")) else ""
     levels = value[4:] if frame_version or value.startswith("dm1:") else value
     if not levels or len(levels) % 2 or not re.fullmatch(r"(?:01|10)+", levels):
@@ -480,57 +519,17 @@ async def save_chat(socket_id: str, data: dict | None = None) -> None:
     data = data or {}
     user_data = await get_user_data(socket_id)
     room_id = user_data.get("room_id")
-    encoded = data.get("encoded")
-    frame_version = encoded[:4] if isinstance(encoded, str) and encoded.startswith(("dm2:", "dm3:")) else ""
-    is_per_byte_frame = bool(frame_version)
-    if is_per_byte_frame:
-        encoded = encoded[4:]
-    if isinstance(encoded, str) and encoded.startswith("dm1:"):
-        encoded = encoded[4:]
+    frame = data.get("frame")
+    # Kolom `pesan` menyimpan frame bit apa adanya:
+    # START 1 + DATA 8 bit + PARITY genap + END per byte.
     if (
         not room_id
-        or not isinstance(encoded, str)
-        or len(encoded) > 65535
-        or not re.fullmatch(r"(?:01|10)+", encoded)
+        or not isinstance(frame, str)
+        or len(frame) > 65535
+        or frame_bits_to_bytes(frame) is None
     ):
         return
-    # Frame per-byte berisi START + DATA + PARITY + END.
-    levels = encoded
-    previous = "0"
-    frame = []
-    for index in range(0, len(levels), 2):
-        frame.append("1" if levels[index] == previous else "0")
-        previous = levels[index + 1]
-    bits = "".join(frame)
-    if is_per_byte_frame:
-        if not bits or len(bits) % 11:
-            return
-        for index in range(0, len(bits), 11):
-            byte_frame = bits[index:index + 11]
-            data_bits = byte_frame[1:9]
-            start_is_invalid = (
-                byte_frame[0] != "1"
-                if frame_version == "dm3:"
-                else byte_frame[0] == data_bits[0]
-            )
-            if (
-                start_is_invalid
-                or byte_frame[-1] == data_bits[-1]
-                or (data_bits.count("1") + int(byte_frame[-2])) % 2
-            ):
-                return
-        stored_value = f"{frame_version}{encoded}"
-    else:
-        data_bits = bits[1:-2]
-        if (
-            not data_bits
-            or len(data_bits) % 8
-            or bits[0] == data_bits[0]
-            or bits[-1] == data_bits[-1]
-            or (data_bits.count("1") + int(bits[-2])) % 2
-        ):
-            return
-        stored_value = encoded
+    stored_value = frame
     async with web_app["db_pool"].acquire() as connection:
         async with connection.cursor() as cursor:
             await cursor.execute(

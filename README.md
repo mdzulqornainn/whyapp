@@ -2,30 +2,84 @@
 
 Contoh aplikasi chat sederhana dengan autentikasi pengguna. Pesan dikirim
 langsung antar-browser memakai WebRTC DataChannel. Python menangani halaman,
-autentikasi, penyimpanan riwayat ke database, dan proses awal koneksi WebRTC.
+autentikasi, penyimpanan riwayat ke database, dan proses awal koneksi WebRTC
+(signaling).
 
-Pesan diubah menjadi bilangan ASCII (kode 0-127), satu karakter menjadi satu
-byte. Karakter di luar ASCII, seperti emoji dan huruf beraksen, tidak didukung.
+## Cara kerja singkat
 
-Setiap byte memiliki frame Differential Manchester tersendiri:
+Pesan diubah menjadi byte **Extended ASCII** (tabel Windows-1252, kode 0-255),
+satu karakter menjadi satu byte. Huruf seperti `é`, `€`, dan `©` didukung,
+tetapi emoji tidak.
+
+Setiap byte dibungkus menjadi satu frame 11 bit:
 
 ```text
 START | DATA 8 bit | PARITY | END
 ```
 
-Parity menggunakan **even parity**. Nilai START selalu `1`, sedangkan END
-adalah kebalikan bit terakhir byte. Satu byte menghasilkan 11 bit frame,
-sedangkan tiga byte menghasilkan 33 bit. Contohnya, pesan `1` memakai HEX
-`31`, DATA `00110001`, dan FRAME `10011000110`. Visualisasi memakai byte ASCII
-pesan asli, bukan hasil XOR. Ciphertext XOR tetap dipakai untuk pengiriman
-melalui DataChannel.
+- **START** selalu `1`.
+- **PARITY** memakai *even parity* (jumlah bit `1` pada DATA + PARITY genap).
+- **END** adalah kebalikan bit terakhir DATA.
+
+Satu byte menghasilkan 11 bit frame, tiga byte menghasilkan 33 bit. Contohnya,
+pesan `1` memakai HEX `31`, DATA `00110001`, dan FRAME `10011000110`.
+
+Frame bit tersebut digambar sebagai sinyal **Differential Manchester** di
+room, dan juga disimpan apa adanya di kolom `pesan` tabel `chat`.
+
+Untuk pengiriman langsung antar-browser, pesan dienkripsi XOR memakai Room ID
+sebagai kunci, lalu dikirim melalui DataChannel.
 
 Tampilan room hanya menampilkan gambar sinyal, HEX, DATA, dan FRAME. Teks
 pesan asli tidak ditampilkan.
 
-## 1. Instalasi
+## Tutorial setup
 
-Pastikan Python sudah terpasang, lalu jalankan:
+### Langkah 1 — Siapkan software
+
+| Software | Keterangan |
+|---|---|
+| [Python 3.10+](https://www.python.org/downloads/) | Saat instalasi di Windows, centang **Add python.exe to PATH** |
+| [Laragon](https://laragon.org/) | Menyediakan MySQL, HeidiSQL, dan phpMyAdmin |
+| Browser modern | Chrome, Edge, atau Firefox (mendukung WebRTC) |
+
+Cek Python dari terminal:
+
+```bash
+python --version
+```
+
+### Langkah 2 — Ambil source code
+
+```bash
+git clone <url-repository> whyapp
+cd whyapp
+```
+
+Atau salin folder proyek, lalu buka terminal di folder tersebut.
+
+### Langkah 3 — Buat virtual environment dan install library
+
+Windows (PowerShell):
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+Jika PowerShell menolak menjalankan script aktivasi, jalankan sekali:
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
+Windows (Command Prompt):
+
+```bat
+python -m venv .venv
+.venv\Scripts\activate
+python -m pip install -r requirements.txt
+```
+
+Linux / macOS:
 
 ```bash
 python3 -m venv .venv
@@ -33,18 +87,19 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-Windows:
+Library yang terpasang: `aiohttp`, `python-socketio`, `aiomysql`, dan `bcrypt`.
 
-```bat
-.venv\Scripts\activate
-python -m pip install -r requirements.txt
-```
+### Langkah 4 — Siapkan database MySQL
 
-## 2. Database Laragon
+1. Buka Laragon, lalu klik **Start All** sampai MySQL berjalan.
+2. Klik **Database** untuk membuka HeidiSQL (atau buka phpMyAdmin).
+3. Buka file [database.sql](database.sql), lalu jalankan seluruh isinya
+   (HeidiSQL: **File → Run SQL file...**, phpMyAdmin: tab **Import** atau **SQL**).
 
-Pastikan MySQL Laragon aktif, lalu jalankan [database.sql](database.sql)
-melalui HeidiSQL atau phpMyAdmin. Script tersebut membuat database `whyapp`,
-tabel pengguna, room, chat, serta dua akun dummy.
+Script tersebut membuat database `whyapp`, tabel `pengguna`, `room`, dan
+`chat`, dua akun dummy, serta room `DEMO`.
+
+### Langkah 5 — Atur koneksi database (jika perlu)
 
 Konfigurasi default:
 
@@ -54,10 +109,12 @@ MYSQL_PORT=3306
 MYSQL_USER=root
 MYSQL_PASSWORD=
 MYSQL_DATABASE=whyapp
+PORT=3001
 ```
 
-Jika password MySQL Laragon tidak kosong, isi `MYSQL_PASSWORD` sebelum
-menjalankan aplikasi.
+Default ini cocok dengan Laragon standar (user `root` tanpa password). Jika
+berbeda, isi environment variable di terminal yang sama sebelum menjalankan
+aplikasi.
 
 Windows PowerShell:
 
@@ -65,36 +122,75 @@ Windows PowerShell:
 $env:MYSQL_PASSWORD = "password-mysql-anda"
 ```
 
-Data dummy:
+Linux / macOS:
 
-| Username | Password |
-|---|---|
-| `alice` | `password123` |
-| `bob` | `password123` |
+```bash
+export MYSQL_PASSWORD="password-mysql-anda"
+```
 
-## 3. Menjalankan
+### Langkah 6 — Jalankan aplikasi
 
 ```bash
 python app.py
 ```
 
-Buka <http://localhost:3001> di browser.
+Jika berhasil, muncul tulisan:
 
-## 4. Mencoba chat
+```text
+Server berjalan di http://localhost:3001
+```
+
+Buka <http://localhost:3001> di browser. Cek status server di
+<http://localhost:3001/health>.
+
+### Langkah 7 — Coba chat
 
 1. Buka <http://localhost:3001>.
-2. Daftar akun baru atau masuk menggunakan akun dummy.
+2. Daftar akun baru atau masuk menggunakan akun dummy:
+
+   | Username | Password |
+   |---|---|
+   | `alice` | `password123` |
+   | `bob` | `password123` |
+
 3. Klik **Buat Room ID**, lalu klik **Masuk ke room**.
-4. Buka alamat yang sama di browser kedua atau mode incognito.
+4. Buka alamat yang sama di browser kedua atau jendela incognito.
 5. Masuk dengan akun kedua dan masukkan Room ID tadi.
-6. Tunggu status **DataChannel: open**.
-7. Kirim pesan (hanya karakter ASCII).
+6. Tunggu sampai status **DataChannel: open**.
+7. Kirim pesan.
 
-Riwayat pesan disimpan di tabel `chat` dan hanya dapat dilihat melalui
-database (HeidiSQL atau phpMyAdmin). Riwayat tidak ditampilkan kembali di
-room saat pengguna masuk. Isi pesan tetap dikirim melalui DataChannel P2P.
+Satu room maksimal berisi dua orang.
 
-## 5. Endpoint API
+### Langkah 8 (opsional) — Migrasi data lama
+
+Versi sebelumnya menyimpan kolom `pesan` sebagai level sinyal Differential
+Manchester dengan awalan `dm1:`, `dm2:`, atau `dm3:`. Untuk mengubah data lama
+tersebut menjadi frame bit, jalankan sekali:
+
+```bash
+python migrate_pesan.py
+```
+
+Baris yang sudah berupa frame bit dibiarkan. Riwayat tetap bisa dibaca
+walaupun migrasi tidak dijalankan.
+
+## Riwayat chat
+
+Setiap pesan disimpan di tabel `chat`. Kolom `pesan` berisi frame bit,
+misalnya:
+
+```text
+10011000110
+```
+
+Saat pengguna masuk room, server mengirim 100 pesan terakhir room tersebut,
+lalu browser menampilkannya sebagai gambar sinyal. Riwayat juga dapat dilihat
+langsung melalui HeidiSQL atau phpMyAdmin.
+
+Panjang pesan maksimal 5957 karakter (11 bit per karakter, batas kolom `TEXT`
+65535 byte).
+
+## Endpoint API
 
 | Method | Endpoint | Keterangan |
 |---|---|---|
@@ -116,18 +212,37 @@ Endpoint login dan register harus dipanggil menggunakan `POST` dengan body JSON:
 Membuka `/api/login` langsung di browser menggunakan `GET` akan menghasilkan
 `405 Method Not Allowed`; gunakan halaman login atau request `POST`.
 
-## 6. Penjelasan folder
+## Struktur folder
 
 ```text
-app.py                 server Python dan signaling Socket.IO
+app.py                 server Python, autentikasi, signaling Socket.IO, riwayat
+migrate_pesan.py       migrasi kolom pesan format lama ke frame bit
 database.sql           schema MySQL dan data dummy
 requirements.txt       daftar library Python
 static/index.html      halaman HTML awal
 static/style.css       tampilan aplikasi
-static/app.js          halaman, WebRTC, dan enkripsi XOR
+static/app.js          halaman, WebRTC, enkripsi XOR, frame bit, gambar sinyal
 ```
+
+## Masalah umum
+
+| Gejala | Penyebab dan solusi |
+|---|---|
+| `Can't connect to MySQL server` | MySQL Laragon belum jalan. Klik **Start All** |
+| `Access denied for user 'root'` | Password MySQL tidak kosong. Isi `MYSQL_PASSWORD` (Langkah 5) |
+| `Unknown database 'whyapp'` | [database.sql](database.sql) belum dijalankan (Langkah 4) |
+| `ModuleNotFoundError` | Virtual environment belum aktif atau library belum terpasang (Langkah 3) |
+| Port 3001 sudah dipakai | Jalankan dengan port lain, misalnya `$env:PORT = "3002"` |
+| Status DataChannel tidak pernah `open` | Kedua browser berada di jaringan yang memblokir koneksi P2P. Coba di satu komputer atau satu jaringan yang sama |
+| Room sudah penuh | Room sudah berisi dua orang. Buat Room ID baru |
 
 ## Catatan keamanan
 
-XOR digunakan untuk pembelajaran, bukan untuk aplikasi produksi. XOR dengan
-kunci berulang tidak setara dengan enkripsi modern seperti AES.
+Aplikasi ini untuk pembelajaran, bukan untuk produksi.
+
+- XOR dengan kunci berulang tidak setara dengan enkripsi modern seperti AES.
+  Kuncinya adalah Room ID, yang juga terlihat di URL.
+- Kolom `pesan` berisi frame bit dari pesan asli. Teks pesan dapat dibaca
+  kembali dengan mengambil 8 bit DATA dari setiap frame.
+- Siapa pun yang mengetahui Room ID dapat masuk dan melihat riwayat room.
+- Session login disimpan di memori server dan hilang saat server dimatikan.

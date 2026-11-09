@@ -124,19 +124,10 @@ function createSignalFrame(bytes) {
   };
 }
 
-// Mengubah frame bit menjadi level sinyal Differential Manchester
-// untuk disimpan di database (awalan "dm3:").
+// Frame bit (START + DATA 8 bit + PARITY + END per byte) yang disimpan
+// apa adanya di kolom `pesan` tabel `chat`.
 function encodeStoredMessage(bytes) {
-  const { bits } = createSignalFrame(bytes);
-  let level = 0;
-  let encoded = "";
-  for (const bit of bits) {
-    if (bit === "0") level ^= 1;
-    encoded += level;
-    level ^= 1;
-    encoded += level;
-  }
-  return `dm3:${encoded}`;
+  return createSignalFrame(bytes).bits;
 }
 
 function createSignalImage(frameBits) {
@@ -641,9 +632,9 @@ function startWebRTC(roomId) {
 
     const bytes = encrypt(text, roomId);
     const dataBytes = asciiToBytes(text);
-    const encoded = encodeStoredMessage(dataBytes);
-    if (encoded.length > 65535) {
-      showSystemMessage("Pesan terlalu panjang untuk disimpan (maksimal 2978 karakter ASCII).");
+    const frame = encodeStoredMessage(dataBytes);
+    if (frame.length > 65535) {
+      showSystemMessage("Pesan terlalu panjang untuk disimpan (maksimal 5957 karakter).");
       return;
     }
     const message = {
@@ -654,7 +645,7 @@ function startWebRTC(roomId) {
     };
 
     dataChannel.send(JSON.stringify(message));
-    socket.emit("save-chat", { encoded });
+    socket.emit("save-chat", { frame });
     showChatMessage(dataBytes, username, true, message.timestamp);
     input.value = "";
   });
