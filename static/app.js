@@ -162,8 +162,10 @@ function createSignalImage(frameBits) {
     const middle = left + bitWidth / 2;
     const right = left + bitWidth;
 
-    // Differential Manchester: bit 0 berubah di awal, bit 1 tidak.
-    if (bit === "0") {
+// Differential Manchester: bit 0 berubah di awal, bit 1 tidak.
+    // REVISI: bit pertama (index 0) tidak digambar transisinya, karena
+    // sudah diterapkan lewat level awal di atas.
+    if (bit === "0" && index !== 0) {
       level ^= 1;
       path += ` L ${left} ${level ? high : low}`;
     }
