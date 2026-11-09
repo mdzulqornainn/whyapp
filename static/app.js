@@ -149,6 +149,11 @@ function createSignalImage(frameBits) {
   const high = 43;
   const low = 93;
   let level = 0;
+
+  // REVISI: jika bit pertama (START) bernilai 0, level dibalik di awal
+  // supaya tidak ada garis vertikal paling awal (konsisten dengan START 1).
+  if (frameBits[0] === "0") level ^= 1;
+
   let path = `M ${leftMargin} ${level ? high : low}`;
   let bitLabels = "";
 
