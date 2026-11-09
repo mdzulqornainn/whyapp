@@ -532,9 +532,23 @@ function startWebRTC(roomId) {
     updateStatus();
   });
 
-  // Riwayat chat tidak ditampilkan di room; riwayat hanya ada di database.
-  socket.on("room-joined", () => {
-    showSystemMessage("Riwayat chat hanya tersimpan di database.");
+  // Server mengirim riwayat chat dari database saat kita masuk (atau tersambung
+  // ulang ke) room. Tampilan dikosongkan dulu agar pesan tidak dobel.
+  socket.on("room-joined", ({ history = [] }) => {
+    messages.innerHTML = "";
+    history.forEach((item) => {
+      showChatMessage(
+        Uint8Array.from(item.bytes),
+        item.sender,
+        item.outgoing,
+        item.timestamp,
+      );
+    });
+    showSystemMessage(
+      history.length
+        ? `Riwayat dimuat (${history.length} pesan terakhir).`
+        : "Belum ada riwayat chat di room ini.",
+    );
   });
 
   socket.on("room-full", () => {
