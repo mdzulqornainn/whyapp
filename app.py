@@ -2,7 +2,7 @@
 
 Server ini membantu dua browser bertukar informasi WebRTC dan menyimpan
 pesan berformat Differential Manchester untuk riwayat room di database.
-Riwayat hanya disimpan di database dan tidak dikirim kembali ke tampilan room.
+Riwayat dibaca dari database dan dikirim ke browser saat pengguna masuk room.
 Pesan langsung antar-browser tetap menggunakan ciphertext XOR.
 """
 
@@ -243,6 +243,33 @@ def decode_stored_message(value: str) -> list[int] | None:
         return None
     return [int(data_bits[i:i + 8], 2) for i in range(0, len(data_bits), 8)]
 
+async def load_room_history(room_id: str, user_id: str) -> list[dict]:
+    async with web_app["db_pool"].acquire() as connection:
+        async with connection.cursor(aiomysql.DictCursor) as cursor:
+            await cursor.execute(
+                "SELECT c.id_chat, c.user_id, c.pesan, "
+                "UNIX_TIMESTAMP(c.waktu_kirim) * 1000 AS timestamp, "
+                "p.nama_pengguna AS sender "
+                "FROM chat c JOIN pengguna p ON p.user_id = c.user_id "
+                "WHERE c.room_id = %s ORDER BY c.id_chat DESC LIMIT 100",
+                (room_id,),
+            )
+            rows = await cursor.fetchall()
+
+    history = []
+    for row in reversed(rows):
+        data_bytes = decode_stored_message(row["pesan"])
+        if data_bytes is None:
+            continue
+        history.append(
+            {
+                "sender": row["sender"],
+                "bytes": data_bytes,
+                "timestamp": int(row["timestamp"]),
+                "outgoing": row["user_id"] == user_id,
+            }
+        )
+    return history
 
 async def get_user_data(socket_id: str) -> dict:
     """Ambil username dan room milik sebuah koneksi."""
@@ -378,37 +405,14 @@ async def join_room(socket_id: str, data: dict | None = None) -> None:
         },
     )
 
-    async with web_app["db_pool"].acquire() as connection:
-        async with connection.cursor(aiomysql.DictCursor) as cursor:
-            await cursor.execute(
-                "SELECT c.pesan AS cipher, UNIX_TIMESTAMP(c.waktu_kirim) * 1000 "
-                "AS timestamp, "
-                "p.nama_pengguna AS sender FROM chat c "
-                "JOIN pengguna p ON p.user_id = c.user_id "
-                "WHERE c.room_id = %s ORDER BY c.waktu_kirim ASC LIMIT 100",
-                (room_id,),
-            )
-            history = await cursor.fetchall() 
-
-    for message in history:
-            if message["cipher"].startswith(("dm2:", "dm3:")):
-                message["encoded"] = message.pop("cipher")
-            elif message["cipher"].startswith("dm1:"):
-                message["encoded"] = message.pop("cipher")[4:]
-            elif (
-                len(message["cipher"]) % 16 == 6
-                and re.fullmatch(r"(?:01|10)+", message["cipher"])
-            ):
-            # Frame 8n+3 bit menjadi 16n+6 level; Base64 panjangnya kelipatan 4.
-                message["encoded"] = message.pop("cipher") 
-    
-    # Riwayat chat TIDAK dikirim ke browser. Riwayat hanya tersimpan di
-    # tabel `chat` dan dapat dilihat melalui database.
+    # Kirim riwayat chat room dari database ke pengguna yang baru masuk.
+    history = await load_room_history(room_id, user_data["user_id"])
     await socket_server.emit(
         "room-joined",
-        {"roomId": room_id, "peers": peers},
+        {"roomId": room_id, "peers": peers, "history": history},
         to=socket_id,
     )
+
     await socket_server.emit(
         "peer-joined",
         {"socketId": socket_id, "username": username},
