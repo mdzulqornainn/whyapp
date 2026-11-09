@@ -178,7 +178,7 @@ function createSignalImage(frameBits) {
     // supaya START 0 tampil sama dengan START 1 (tanpa garis paling awal).
     const gridLine = index === 0
       ? ""
-      : <line x1="${left}" y1="27" x2="${left}" y2="104" class="grid"/>;
+      : `<line x1="${left}" y1="27" x2="${left}" y2="104" class="grid"/>`;
 
     bitLabels += `
       <text x="${left + bitWidth / 2}" y="18" text-anchor="middle">${bit}</text>
