@@ -145,6 +145,19 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 }
 .signal-data div { margin-top: 4px; }
 .signal-data b { color: #fff; margin-right: 6px; }
+.translate-button { margin-top: 10px; }
+.translation-form { margin-top: 10px; text-align: left; }
+.translation-form[hidden], .translated-text[hidden] { display: none; }
+.translation-error { color: #ffd3dc; }
+.translated-text {
+  margin-top: 10px;
+  padding: 8px 10px;
+  color: #242026;
+  background: white;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
 
 .composer { border-top: 1px solid var(--border); border-bottom: 0; }
 .composer form { display: flex; gap: 8px; }

@@ -182,6 +182,17 @@ async def fetch_user_by_name(name: str) -> dict | None:
             return await cursor.fetchone()
 
 
+async def fetch_password_hash(user_id: str) -> str | None:
+    async with web_app["db_pool"].acquire() as connection:
+        async with connection.cursor() as cursor:
+            await cursor.execute(
+                "SELECT password FROM pengguna WHERE user_id = %s",
+                (user_id,),
+            )
+            row = await cursor.fetchone()
+            return row[0] if row else None
+
+
 async def register_user(request: web.Request) -> web.Response:
     data = await request.json()
     name = str(data.get("username", "")).strip()
@@ -238,6 +249,24 @@ async def current_user(request: web.Request) -> web.Response:
     )
 
 
+async def verify_account_password(request: web.Request) -> web.Response:
+    session = session_from_request(request)
+    if not session:
+        return web.json_response({"message": "Silakan masuk kembali."}, status=401)
+
+    data = await request.json()
+    password = data.get("password") if isinstance(data, dict) else None
+    password_hash = await fetch_password_hash(session["user_id"])
+    password_bytes = password.encode() if isinstance(password, str) else b""
+    if (
+        not 8 <= len(password_bytes) <= 72
+        or not password_hash
+        or not bcrypt.checkpw(password_bytes, password_hash.encode())
+    ):
+        return web.json_response({"message": "Password akun salah."}, status=401)
+    return web.json_response({"verified": True})
+
+
 ROOM_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 ROOM_ID_ATTEMPTS = 10
 
@@ -280,6 +309,7 @@ web_app.router.add_post("/api/register", register_user)
 web_app.router.add_post("/api/login", login_user)
 web_app.router.add_post("/api/logout", logout_user)
 web_app.router.add_get("/api/me", current_user)
+web_app.router.add_post("/api/verify-password", verify_account_password)
 
 FRAME_SIZE = 11  # START + DATA 8 bit + PARITY + END
 

@@ -30,8 +30,9 @@ room, dan juga disimpan apa adanya di kolom `pesan` tabel `chat`.
 Untuk pengiriman langsung antar-browser, pesan dienkripsi XOR memakai Room ID
 sebagai kunci, lalu dikirim melalui DataChannel.
 
-Tampilan room hanya menampilkan gambar sinyal, HEX, DATA, dan FRAME. Teks
-pesan asli tidak ditampilkan.
+Tampilan room menampilkan gambar sinyal, HEX, DATA, dan FRAME. Teks asli
+tersembunyi sampai pengguna menekan **Terjemahkan** dan memasukkan password
+akunnya.
 
 ## Tutorial setup
 
@@ -199,6 +200,13 @@ pengirimnya.
 
 Riwayat juga dapat dilihat langsung melalui HeidiSQL atau phpMyAdmin.
 
+Setiap kartu pesan memiliki tombol **Terjemahkan**. Browser sudah menerima
+byte DATA untuk menggambar sinyal; setelah password akun diverifikasi oleh
+server menggunakan hash bcrypt yang tersimpan, browser mengubah byte menjadi
+teks Windows-1252 dan menampilkannya. Password tidak disimpan ulang oleh fitur
+ini. Ini hanya gerbang tampilan, bukan enkripsi: pengguna yang dapat membaca
+data aplikasi atau database tetap dapat menerjemahkan frame tanpa password.
+
 ## Room ID
 
 Tombol **Buat Room ID** meminta Room ID ke server (`POST /api/rooms`). Server
@@ -217,6 +225,7 @@ Panjang pesan maksimal 5957 karakter (11 bit per karakter, batas kolom `TEXT`
 | `POST` | `/api/login` | Login dan membuat session cookie |
 | `POST` | `/api/logout` | Menghapus session |
 | `GET` | `/api/me` | Memeriksa session aktif |
+| `POST` | `/api/verify-password` | Memeriksa password akun untuk membuka teks pesan (perlu login) |
 | `POST` | `/api/rooms` | Membuat Room ID baru yang belum ada di database (perlu login) |
 | `GET` | `/health` | Memeriksa status server |
 

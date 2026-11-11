@@ -415,8 +415,7 @@ function startWebRTC(roomId) {
     messages.insertAdjacentHTML("beforeend", `<div class="system">${escapeHtml(text)}</div>`);
   }
 
-  // Room hanya menampilkan: gambar sinyal, HEX, DATA (bit), dan FRAME.
-  // Teks pesan asli tidak ditampilkan.
+  // Teks asli hanya ditampilkan setelah pengguna memverifikasi password akunnya.
   function showChatMessage(dataBytes, sender, outgoing, timestamp) {
     const signal = createSignalFrame(dataBytes);
     const frameCount = signal.bits.length / 11;
@@ -447,8 +446,54 @@ function startWebRTC(roomId) {
             <div><b>DATA</b> ${signal.dataBits}</div>
             <div><b>FRAME</b> ${signal.bits}</div>
           </div>
+          <button type="button" class="translate-button secondary">Terjemahkan</button>
+          <form class="translation-form form" hidden>
+            <label>
+              Password akun
+              <input type="password" name="password" minlength="8" maxlength="72"
+                     autocomplete="current-password" required>
+            </label>
+            <div class="translation-error error" role="alert"></div>
+            <button type="submit">Buka teks asli</button>
+          </form>
+          <div class="translated-text" hidden></div>
         </div>
       </article>`);
+
+    const message = messages.lastElementChild;
+    const translateButton = message.querySelector(".translate-button");
+    const form = message.querySelector(".translation-form");
+    const passwordInput = form.elements.password;
+    const error = message.querySelector(".translation-error");
+    const translatedText = message.querySelector(".translated-text");
+
+    translateButton.addEventListener("click", () => {
+      translateButton.hidden = true;
+      form.hidden = false;
+      passwordInput.focus();
+    });
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const submitButton = form.querySelector('button[type="submit"]');
+      submitButton.disabled = true;
+      error.textContent = "";
+      try {
+        await api("/api/verify-password", {
+          method: "POST",
+          body: JSON.stringify({ password: passwordInput.value }),
+        });
+        translatedText.textContent = bytesToText(dataBytes  );
+        translatedText.hidden = false;
+        form.hidden = true;
+      } catch (requestError) {
+        error.textContent = requestError.message;
+      } finally {
+        passwordInput.value = "";
+        submitButton.disabled = false;
+      }
+    });
+
     messages.scrollTop = messages.scrollHeight;
   }
 
